@@ -1,0 +1,9 @@
+{
+    "name": "@boreal/core",
+    "private": true,
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "lint": "eslint ."
+    }
+}

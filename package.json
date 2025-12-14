@@ -1,0 +1,17 @@
+{
+    "name": "boreal",
+    "scripts": {
+        "build": "turbo run build",
+        "dev": "turbo run dev",
+        "lint": "turbo run lint"
+    },
+    "devDependencies": {
+        "turbo": "^2.6.3",
+        "typescript": "~5.9.3"
+    },
+    "packageManager": "bun@1.2.0",
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ]
+}

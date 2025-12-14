@@ -1,0 +1,9 @@
+{
+    "name": "@boreal/image-vision",
+    "private": true,
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "lint": "eslint ."
+    }
+}
