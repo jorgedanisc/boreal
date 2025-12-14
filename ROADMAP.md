@@ -14,7 +14,7 @@
   - [ ] Import vault code flow
   - [ ] Store vault file in OS keychain
 - [ ] Upload flow
-  - [ ] Thumbnail generation (AVIF, 50KB max)
+  - [ ] Thumbnail generation (AVIF, 50KB max) with ravif in rust
   - [ ] EXIF extraction
   - [ ] Encrypt original + thumbnail
   - [ ] Upload to S3
