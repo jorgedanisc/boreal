@@ -3,7 +3,9 @@
     "scripts": {
         "build": "turbo run build",
         "dev": "turbo run dev",
-        "lint": "turbo run lint"
+        "lint": "turbo run lint",
+        "desktop:dev": "turbo run --filter=@boreal/client desktop:dev",
+        "desktop:build": "turbo run --filter=@boreal/client desktop:build"
     },
     "devDependencies": {
         "turbo": "^2.6.3",

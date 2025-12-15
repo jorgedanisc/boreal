@@ -15,6 +15,24 @@
             "cache": false,
             "persistent": true
         },
+        "core:build": {
+            "cache": false
+        },
+        "infra:build": {
+            "cache": false
+        },
+        "image-vision:build": {
+            "cache": false
+        },
+        "desktop:dev": {
+            "cache": false,
+            "persistent": true,
+            "dependsOn": [
+                "core:build",
+                "infra:build",
+                "image-vision:build"
+            ]
+        },
         "lint": {
             "dependsOn": [
                 "^lint"

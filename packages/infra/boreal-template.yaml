@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Boreal Vault Infrastructure: S3 Bucket and IAM User'
+
+Parameters:
+  VaultName:
+    Type: String
+    Description: 'Name of the Vault (used for Bucket naming suffix)'
+    Default: 'boreal-vault'
+    AllowedPattern: '[a-z0-9-]+'
+
+Resources:
+  # S3 Bucket for Vault Storage
+  VaultBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'boreal-${VaultName}-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Instant Retrieval Tier (Standard) - Thumbnails and DB
+          - Id: 'StandardStorage'
+            Prefix: 'thumbnails/'
+            Status: Enabled
+            Transitions: [] # Stay in Standard
+          
+          # Deep Archive Tier - Originals
+          # We might want to make this configurable or have two separate rules/prefixes
+          # For now, we assume everything under originals/ goes to Glacier Deep Archive after 0 days (immediate transition)
+          # Note: S3 Standard is needed for immediate upload, then transition.
+          - Id: 'ArchiveOriginals'
+            Prefix: 'originals/'
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 0
+                StorageClass: DEEP_ARCHIVE
+
+
+  # IAM User for the App
+  VaultUser:
+    Type: 'AWS::IAM::User'
+    Properties:
+      UserName: !Sub 'boreal-user-${VaultName}'
+      Policies:
+        - PolicyName: 'BorealBucketAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                  - 's3:DeleteObject'
+                Resource:
+                  - !GetAtt VaultBucket.Arn
+                  - !Sub '${VaultBucket.Arn}/*'
+
+  # Access Keys for the User
+  VaultAccessKey:
+    Type: 'AWS::IAM::AccessKey'
+    Properties: 
+      UserName: !Ref VaultUser
+
+Outputs:
+  BucketName:
+    Description: 'S3 Bucket Name'
+    Value: !Ref VaultBucket
+  
+  Region:
+    Description: 'AWS Region'
+    Value: !Ref 'AWS::Region'
+
+  AccessKeyId:
+    Description: 'Access Key ID'
+    Value: !Ref VaultAccessKey
+
+  SecretAccessKey:
+    Description: 'Secret Access Key'
+    Value: !GetAtt VaultAccessKey.SecretAccessKey

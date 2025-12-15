@@ -1,0 +1,96 @@
+{
+  "common": {
+    "continue": "Continue",
+    "back": "Back",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success"
+  },
+  "setup": {
+    "welcome": {
+      "title": "Boreal",
+      "tagline": "Cold private storage, vivid memories.",
+      "createVault": {
+        "title": "Create New Vault",
+        "description": "Set up a new vault with your AWS account. Takes about 2 minutes."
+      },
+      "importVault": {
+        "title": "I Have a Vault",
+        "description": "Import an existing vault file from another device."
+      },
+      "footer": "Your photos are encrypted on your device. AWS only sees encrypted blobs."
+    },
+    "configure": {
+      "title": "Configure Your Vault",
+      "description": "Choose where to store your photos and how you want to access them.",
+      "region": {
+        "label": "Region",
+        "placeholder": "Select a region",
+        "hint": "Choose the region closest to you for faster uploads."
+      },
+      "tier": {
+        "label": "Storage Tier",
+        "deepArchive": {
+          "name": "Deep Archive",
+          "description": "Best for photos you rarely access. Originals take 12-48 hours to retrieve.",
+          "price": "~$1/TB/month"
+        },
+        "instantRetrieval": {
+          "name": "Instant Retrieval",
+          "description": "Best for photos you access frequently. Originals are always available.",
+          "price": "~$4/TB/month"
+        }
+      },
+      "step": "Step 1 of 3"
+    },
+    "connectAws": {
+      "title": "Connect Your AWS Account",
+      "description": "We'll open AWS CloudFormation to set up your storage. It only takes a minute.",
+      "steps": {
+        "1": "Click the button below to open AWS in your browser",
+        "2": "Log in to your AWS account (or create one)",
+        "3": "Review the stack and click \"Create Stack\"",
+        "4": "Wait about 30 seconds for setup to complete",
+        "5": "Go to the \"Outputs\" tab and copy the Vault Code"
+      },
+      "openConsole": "Open AWS Console",
+      "consoleOpened": "Console Opened",
+      "vaultCode": {
+        "label": "Vault Code",
+        "placeholder": "Paste the Vault Code from AWS Outputs here...",
+        "error": "Invalid vault code format"
+      },
+      "completeSetup": "Complete Setup",
+      "step": "Step 2 of 3"
+    },
+    "import": {
+      "title": "Import Your Vault",
+      "description": "Select your vault file or paste the vault code from another device.",
+      "selectFile": "Select Vault File",
+      "fileTypes": ".json or .boreal",
+      "changeFile": "Click to change file",
+      "orPaste": "or paste vault code",
+      "placeholder": "{\"access_key_id\": \"...\", \"secret_access_key\": \"...\", ...}",
+      "importButton": "Import Vault",
+      "error": "Invalid vault file format. Missing required fields."
+    },
+    "complete": {
+      "title": "You're All Set!",
+      "description": "Your vault is ready. Start uploading your photos — they'll be encrypted and stored securely in your AWS account.",
+      "features": {
+        "encrypted": "Photos are encrypted on your device",
+        "thumbnails": "Thumbnails load instantly",
+        "offline": "Works offline after sync"
+      },
+      "openGallery": "Open Gallery"
+    }
+  },
+  "gallery": {
+    "title": "Photos",
+    "addPhoto": "Add Photo",
+    "noPhotos": "No photos yet",
+    "uploadFailed": "Upload failed"
+  }
+}
