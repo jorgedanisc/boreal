@@ -40,4 +40,5 @@ chrono = { version = "0.4.42", features = ["serde"] }
 tauri-plugin-dialog = "2.4.2"
 rgb = { version = "0.8.52", features = ["serde"] }
 tauri-plugin-fs = "2.4.4"
+tauri-plugin-stronghold = "2"
 

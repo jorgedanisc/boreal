@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "Boreal"
+  },
   "common": {
     "continue": "Continue",
     "back": "Back",
@@ -12,14 +15,15 @@
     "welcome": {
       "title": "Boreal",
       "tagline": "Cold private storage, vivid memories.",
-      "createVault": {
-        "title": "Create New Vault",
-        "description": "Set up a new vault with your AWS account. Takes about 2 minutes."
-      },
-      "importVault": {
-        "title": "I Have a Vault",
-        "description": "Import an existing vault file from another device."
-      },
+      "subtitle": "Cold private storage, vivid memories.",
+      "openVault": "Your Vaults",
+      "newVault": "Add New Vault",
+      "createVault": "Create New",
+      "importVault": "Import",
+      "createVault.title": "Create New Vault",
+      "createVault.description": "Set up a new vault with your AWS account. Takes about 2 minutes.",
+      "importVault.title": "I Have a Vault",
+      "importVault.description": "Import an existing vault file from another device.",
       "footer": "Your photos are encrypted on your device. AWS only sees encrypted blobs."
     },
     "configure": {

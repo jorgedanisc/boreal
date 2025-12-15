@@ -3,6 +3,7 @@ import { IconChevronLeft, IconExternalLink, IconCheck, IconCopy, IconLoader } fr
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { bootstrapVault } from "@/lib/vault";
 import { getCloudFormationQuickCreateUrl, type StorageTier } from "@/lib/aws-config";
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -51,9 +52,14 @@ export function ConnectAwsStep({ region, tier, onBack, onComplete }: ConnectAwsS
 
     try {
       const parsed = JSON.parse(vaultCode);
+
       if (!parsed.access_key_id || !parsed.secret_access_key || !parsed.bucket || !parsed.region) {
         throw new Error(t("setup.connectAws.vaultCode.error"));
       }
+
+      // Bootstrap the vault (generate keys, upload to S3)
+      await bootstrapVault(vaultCode);
+
       onComplete(vaultCode);
     } catch (e: any) {
       setError(e.message || t("setup.connectAws.vaultCode.error"));
@@ -66,7 +72,7 @@ export function ConnectAwsStep({ region, tier, onBack, onComplete }: ConnectAwsS
     t("setup.connectAws.steps.2"),
     t("setup.connectAws.steps.3"),
     t("setup.connectAws.steps.4"),
-    t("setup.connectAws.steps.5"),
+    "Copy the 'VaultCode' value and paste it below",
   ];
 
   return (

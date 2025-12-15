@@ -1,19 +1,23 @@
 {
-    "name": "boreal",
-    "scripts": {
-        "build": "turbo run build",
-        "dev": "turbo run dev",
-        "lint": "turbo run lint",
-        "desktop:dev": "turbo run --filter=@boreal/client desktop:dev",
-        "desktop:build": "turbo run --filter=@boreal/client desktop:build"
-    },
-    "devDependencies": {
-        "turbo": "^2.6.3",
-        "typescript": "~5.9.3"
-    },
-    "packageManager": "bun@1.2.0",
-    "workspaces": [
-        "apps/*",
-        "packages/*"
-    ]
+  "name": "boreal",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "desktop:dev": "turbo run --filter=@boreal/client desktop:dev",
+    "desktop:build": "turbo run --filter=@boreal/client desktop:build",
+    "deploy:template": "bun sst deploy --stage production"
+  },
+  "devDependencies": {
+    "turbo": "^2.6.3",
+    "typescript": "~5.9.3"
+  },
+  "packageManager": "bun@1.2.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "sst": "^3.17.25"
+  }
 }

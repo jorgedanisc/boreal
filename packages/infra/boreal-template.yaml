@@ -7,13 +7,24 @@ Parameters:
     Description: 'Name of the Vault (used for Bucket naming suffix)'
     Default: 'boreal-vault'
     AllowedPattern: '[a-z0-9-]+'
+  
+  StorageTier:
+    Type: String
+    Description: 'Storage class for original files. DEEP_ARCHIVE is cheapest but takes 12-48 hours to retrieve. GLACIER_IR is 4x more expensive but instant.'
+    Default: 'DEEP_ARCHIVE'
+    AllowedValues:
+      - DEEP_ARCHIVE
+      - GLACIER_IR
 
 Resources:
   # S3 Bucket for Vault Storage
   VaultBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
-      BucketName: !Sub 'boreal-${VaultName}-${AWS::AccountId}-${AWS::Region}'
+      # Append a unique suffix from the Stack ID to ensure uniqueness
+      BucketName: !Sub 
+        - 'boreal-${VaultName}-${AWS::AccountId}-${AWS::Region}-${StackGuid}'
+        - StackGuid: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -23,43 +34,50 @@ Resources:
         Status: Enabled
       LifecycleConfiguration:
         Rules:
-          # Instant Retrieval Tier (Standard) - Thumbnails and DB
-          - Id: 'StandardStorage'
-            Prefix: 'thumbnails/'
-            Status: Enabled
-            Transitions: [] # Stay in Standard
-          
-          # Deep Archive Tier - Originals
-          # We might want to make this configurable or have two separate rules/prefixes
-          # For now, we assume everything under originals/ goes to Glacier Deep Archive after 0 days (immediate transition)
-          # Note: S3 Standard is needed for immediate upload, then transition.
+          # Transition originals/ to selected storage tier after 1 day
+          # (TransitionInDays must be >= 1 for lifecycle rules)
           - Id: 'ArchiveOriginals'
             Prefix: 'originals/'
             Status: Enabled
             Transitions:
-              - TransitionInDays: 0
-                StorageClass: DEEP_ARCHIVE
-
+              - TransitionInDays: 1
+                StorageClass: !Ref StorageTier
+          # Note: thumbnails/, db/, audio/, and vault-key.enc stay in Standard (no rule needed)
 
   # IAM User for the App
   VaultUser:
     Type: 'AWS::IAM::User'
     Properties:
-      UserName: !Sub 'boreal-user-${VaultName}'
+      # Append a unique suffix from the Stack ID to ensure uniqueness even if StackName is reused after deletion failure
+      # StackId format: arn:aws:cloudformation:region:account:stack/stack-name/guid
+      UserName: !Sub 
+        - 'boreal-user-${VaultName}-${StackGuid}'
+        - StackGuid: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
       Policies:
         - PolicyName: 'BorealBucketAccess'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # S3 bucket operations
               - Effect: Allow
                 Action:
                   - 's3:PutObject'
                   - 's3:GetObject'
                   - 's3:ListBucket'
                   - 's3:DeleteObject'
+                  - 's3:RestoreObject'
                 Resource:
                   - !GetAtt VaultBucket.Arn
                   - !Sub '${VaultBucket.Arn}/*'
+              # IAM key management for credential rotation (access revocation)
+              - Effect: Allow
+                Action:
+                  - 'iam:CreateAccessKey'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:ListAccessKeys'
+                Resource: !Sub 
+                  - 'arn:aws:iam::${AWS::AccountId}:user/boreal-user-${VaultName}-${StackGuid}'
+                  - StackGuid: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
 
   # Access Keys for the User
   VaultAccessKey:
@@ -68,18 +86,6 @@ Resources:
       UserName: !Ref VaultUser
 
 Outputs:
-  BucketName:
-    Description: 'S3 Bucket Name'
-    Value: !Ref VaultBucket
-  
-  Region:
-    Description: 'AWS Region'
-    Value: !Ref 'AWS::Region'
-
-  AccessKeyId:
-    Description: 'Access Key ID'
-    Value: !Ref VaultAccessKey
-
-  SecretAccessKey:
-    Description: 'Secret Access Key'
-    Value: !GetAtt VaultAccessKey.SecretAccessKey
+  VaultCode:
+    Description: 'Copy this code into the Boreal app'
+    Value: !Sub '{"bucket":"${VaultBucket}","region":"${AWS::Region}","access_key_id":"${VaultAccessKey}","secret_access_key":"${VaultAccessKey.SecretAccessKey}"}'

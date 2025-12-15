@@ -20,43 +20,112 @@ struct AppState {
 
 // Commands
 
+use crate::vault::{store, VaultPublic};
+
+#[tauri::command]
+async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
+    store::get_vaults(&app)
+}
+
+#[tauri::command]
+async fn load_vault(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    // 1. Get config from Stronghold
+    let config = store::load_vault(&app, &id)?;
+
+    // 2. Validate key
+    let _ = BASE64
+        .decode(&config.vault_key)
+        .map_err(|e| format!("Invalid vault key encoding: {}", e))?;
+
+    // 3. Setup Storage
+    let storage = Storage::new(&config).await;
+
+    // 4. Setup DB (Scoped to vault ID to support multiple vaults!)
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // Create a subfolder for this vault to avoid conflict
+    let vault_dir = app_dir.join("vaults").join(&config.id);
+    if !vault_dir.exists() {
+        std::fs::create_dir_all(&vault_dir).map_err(|e| e.to_string())?;
+    }
+
+    let db_path = vault_dir.join("manifest.db");
+    let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+
+    // 5. Update State
+    *state.storage.lock().await = Some(storage);
+    *state.db.lock().await = Some(conn);
+    *state.config.lock().await = Some(config);
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn import_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     vault_code: String,
 ) -> Result<(), String> {
-    let config: VaultConfig =
+    let mut config: VaultConfig =
         serde_json::from_str(&vault_code).map_err(|e| format!("Invalid vault code: {}", e))?;
 
-    // Validate key
-    let _ = BASE64
-        .decode(&config.vault_key)
-        .map_err(|e| format!("Invalid vault key encoding: {}", e))?;
-
-    // Setup Storage
-    let storage = Storage::new(&config).await;
-
-    // Setup DB
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    if !app_dir.exists() {
-        std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
+    // If imported config lacks ID/Name (legacy format?), generate them.
+    if config.id.is_empty() {
+        config.id = uuid::Uuid::new_v4().to_string();
+    }
+    if config.name.is_empty() {
+        config.name = "Imported Vault".to_string();
     }
 
-    let db_path = app_dir.join("manifest.db");
-    let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+    // Save to Stronghold
+    store::save_vault(&app, &config)?;
 
-    // Save config to disk (WARNING: Plaintext for Phase 1. Should use Keychain)
-    let config_path = app_dir.join("vault.json");
-    let config_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
-    std::fs::write(config_path, config_json).map_err(|e| e.to_string())?;
+    // Activate
+    load_vault(app, state, config.id).await
+}
 
-    // Update State
-    *state.storage.lock().await = Some(storage);
-    *state.db.lock().await = Some(conn);
-    *state.config.lock().await = Some(config);
+#[tauri::command]
+async fn bootstrap_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    vault_code: String,
+) -> Result<(), String> {
+    use crate::vault::BootstrapConfig;
 
-    Ok(())
+    let bootstrap: BootstrapConfig =
+        serde_json::from_str(&vault_code).map_err(|e| format!("Invalid vault code: {}", e))?;
+
+    // 1. Generate Keys
+    let kek = crypto::generate_key();
+    let vault_key = crypto::generate_key();
+
+    // 2. Encrypt Vault Key with KEK
+    let enc_vault_key = crypto::encrypt(&vault_key, &kek)
+        .map_err(|e| format!("Failed to encrypt vault key: {}", e))?;
+
+    // 3. Create full config
+    let id = uuid::Uuid::new_v4().to_string();
+    let config = VaultConfig::new(
+        id.clone(),
+        "My Vault".to_string(), // Default name, user can rename later
+        bootstrap.access_key_id,
+        bootstrap.secret_access_key,
+        bootstrap.region,
+        bootstrap.bucket,
+        BASE64.encode(kek),
+    );
+
+    // 4. Setup Storage & Upload Encrypted Key (We need to init storage temporarily)
+    let storage = Storage::new(&config).await;
+    storage
+        .upload_file("vault-key.enc", enc_vault_key)
+        .await
+        .map_err(|e| format!("Failed to upload vault key: {}", e))?;
+
+    // 5. Save to Stronghold
+    store::save_vault(&app, &config)?;
+
+    // 6. Activate
+    load_vault(app, state, id).await
 }
 
 #[tauri::command]
@@ -213,9 +282,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             import_vault,
+            bootstrap_vault,
             upload_photo,
             get_photos,
-            get_thumbnail
+            get_thumbnail,
+            get_vaults,
+            load_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

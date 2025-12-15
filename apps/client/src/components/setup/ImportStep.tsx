@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
+import { importVault } from "@/lib/vault";
 
 
 interface ImportStepProps {
@@ -51,6 +52,10 @@ export function ImportStep({ onBack, onComplete }: ImportStepProps) {
       if (!parsed.access_key_id || !parsed.secret_access_key || !parsed.bucket || !parsed.region) {
         throw new Error(t("setup.import.error"));
       }
+
+      // Import the vault
+      await importVault(vaultCode);
+
       onComplete(vaultCode);
     } catch (e: any) {
       setError(e.message || t("setup.import.error"));
