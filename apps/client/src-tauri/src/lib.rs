@@ -269,12 +269,100 @@ async fn get_thumbnail(state: State<'_, AppState>, id: String) -> Result<String,
     Ok(BASE64.encode(&dec_bytes))
 }
 
+#[tauri::command]
+async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPublic>, String> {
+    let config = state.config.lock().await;
+    match config.as_ref() {
+        Some(c) => Ok(Some(VaultPublic {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            bucket: c.bucket.clone(),
+        })),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn export_vault(app: AppHandle, id: String) -> Result<String, String> {
+    let config = store::load_vault(&app, &id)?;
+    serde_json::to_string(&config).map_err(|e| format!("Failed to serialize vault: {}", e))
+}
+
+use rand::RngCore;
+
+#[derive(serde::Serialize)]
+struct ExportViewData {
+    qr_url: String,
+    pin: String,
+}
+
+#[tauri::command]
+async fn create_export_qr(app: AppHandle, id: String) -> Result<ExportViewData, String> {
+    // 1. Load Vault Config
+    let config = store::load_vault(&app, &id)?;
+    let json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+
+    // 2. Generate 6-digit PIN
+    let mut rng = rand::thread_rng();
+    let pin: u32 = rand::Rng::gen_range(&mut rng, 100000..999999);
+    let pin_string = pin.to_string();
+
+    // 3. Generate Salt (16 bytes)
+    let mut salt = [0u8; 16];
+    rng.fill_bytes(&mut salt);
+
+    // 4. Derive Key
+    let key = crypto::derive_key(&pin_string, &salt);
+
+    // 5. Encrypt (Salt + Nonce + Ciphertext)
+    // crypto::encrypt already prepends Nonce. We prepend Salt manually.
+    let encrypted_data = crypto::encrypt(json.as_bytes(), &key).map_err(|e| e.to_string())?;
+
+    let mut final_blob = salt.to_vec();
+    final_blob.extend(encrypted_data);
+
+    // 6. Encode Base64
+    let b64_data = BASE64.encode(final_blob);
+    let url = format!("boreal://import?data={}", b64_data);
+
+    Ok(ExportViewData {
+        qr_url: url,
+        pin: pin_string,
+    })
+}
+
+#[tauri::command]
+async fn decrypt_import(encrypted_data: String, pin: String) -> Result<String, String> {
+    let blob = BASE64
+        .decode(&encrypted_data)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
+
+    if blob.len() < 16 + crypto::NONCE_LEN {
+        return Err("Invalid data length".to_string());
+    }
+
+    // Extract Salt
+    let (salt, rest) = blob.split_at(16);
+
+    // Derive Key
+    let key = crypto::derive_key(&pin, salt);
+
+    // Decrypt (rest contains Nonce + Ciphertext, which crypto::decrypt expects)
+    let plaintext =
+        crypto::decrypt(rest, &key).map_err(|_| "Decryption failed. Wrong PIN?".to_string())?;
+
+    let json = String::from_utf8(plaintext).map_err(|e| e.to_string())?;
+    Ok(json)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_os::init())
         .manage(AppState {
             storage: Mutex::new(None),
             db: Mutex::new(None),
@@ -287,7 +375,11 @@ pub fn run() {
             get_photos,
             get_thumbnail,
             get_vaults,
-            load_vault
+            load_vault,
+            export_vault,
+            get_active_vault,
+            create_export_qr,
+            decrypt_import
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

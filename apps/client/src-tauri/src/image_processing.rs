@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use image::io::Reader as ImageReader;
 use image::EncodableLayout;
+use image::ImageReader;
 use imgref::Img;
 use ravif::Encoder;
 use std::path::Path;

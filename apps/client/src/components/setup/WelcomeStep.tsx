@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { IconPlus, IconDownload, IconLock, IconChevronRight, IconLoader } from "@tabler/icons-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { IconPlus, IconDownload, IconLock, IconChevronRight, IconLoader, IconScan } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import { getVaults, loadVault, type VaultPublic } from "@/lib/vault";
 import { useNavigate } from "@tanstack/react-router";
@@ -9,6 +10,8 @@ interface WelcomeStepProps {
   onCreateVault: () => void;
   onImportVault: () => void;
 }
+
+const MAX_VISIBLE_VAULTS = 4;
 
 export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) {
   const { t } = useTranslation();
@@ -35,9 +38,11 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
     }
   };
 
+  const visibleVaults = vaults.slice(0, MAX_VISIBLE_VAULTS);
+
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-8 animate-in fade-in zoom-in duration-500">
+    <div className="flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-lg space-y-8 animate-in fade-in zoom-in duration-500">
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-br from-foreground to-muted-foreground bg-clip-text text-transparent">
             {t("app.name")}
@@ -53,35 +58,49 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Existing Vaults List */}
+            {/* Vaults Grid */}
             {vaults.length > 0 && (
               <div className="space-y-3">
-                <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider px-1">
-                  {t("setup.welcome.openVault")}
-                </p>
-                <div className="grid gap-2">
-                  {vaults.map((vault) => (
-                    <button
-                      key={vault.id}
-                      onClick={() => handleOpenVault(vault.id)}
-                      disabled={!!openLoading}
-                      className="flex items-center gap-4 p-4 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all text-left w-full group"
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                      {t("setup.welcome.openVault")}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="w-5 h-5 text-muted-foreground hover:text-foreground"
+                      onClick={() => navigate({ to: "/vaults" })}
                     >
-                      <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                        {openLoading === vault.id ? (
-                          <IconLoader className="w-5 h-5 animate-spin" />
-                        ) : (
-                          <IconLock className="w-5 h-5" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{vault.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{vault.bucket}</p>
-                      </div>
-                      <IconChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                    </button>
-                  ))}
+                      <IconChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
+
+                <ScrollArea className="max-h-[200px]">
+                  <div className="grid grid-cols-2 gap-2">
+                    {visibleVaults.map((vault) => (
+                      <button
+                        key={vault.id}
+                        onClick={() => handleOpenVault(vault.id)}
+                        disabled={!!openLoading}
+                        className="flex items-center gap-3 p-3 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all text-left w-full group"
+                      >
+                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
+                          {openLoading === vault.id ? (
+                            <IconLoader className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <IconLock className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{vault.name}</p>
+                          <p className="text-xs text-muted-foreground truncate">{vault.bucket}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </ScrollArea>
               </div>
             )}
 
@@ -106,12 +125,22 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
                 <Button
                   variant="outline"
                   className="h-auto py-6 flex flex-col gap-2 hover:border-primary/50 hover:bg-muted/50"
-                  onClick={onImportVault}
+                  onClick={() => navigate({ to: "/scan" })}
                 >
-                  <IconDownload className="w-6 h-6" />
-                  <span className="font-medium">{t("setup.welcome.importVault")}</span>
+                  <IconScan className="w-6 h-6" />
+                  <span className="font-medium">Scan QR</span>
                 </Button>
               </div>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={onImportVault}
+              >
+                <IconDownload className="w-4 h-4 mr-2" />
+                {t("setup.welcome.importVault")} manually
+              </Button>
             </div>
           </div>
         )}

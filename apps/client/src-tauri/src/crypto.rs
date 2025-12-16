@@ -1,10 +1,20 @@
 use anyhow::Result;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+use hmac::Hmac;
+use pbkdf2::pbkdf2;
 use rand::rngs::OsRng;
 use rand::RngCore;
+use sha2::Sha256;
 
 pub const NONCE_LEN: usize = 12;
+
+pub fn derive_key(pin: &str, salt: &[u8]) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    // 100,000 iterations is a reasonable balance for this use case
+    let _ = pbkdf2::<Hmac<Sha256>>(pin.as_bytes(), salt, 100_000, &mut key);
+    key
+}
 
 pub fn generate_key() -> [u8; 32] {
     let mut key = [0u8; 32];

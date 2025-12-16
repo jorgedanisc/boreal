@@ -31,7 +31,6 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 ravif = "0.11"
-image = { version = "0.24", default-features = false, features = ["jpeg", "png"] }
 imgref = "1.10"
 anyhow = "1.0"
 thiserror = "1.0"
@@ -41,4 +40,10 @@ tauri-plugin-dialog = "2.4.2"
 rgb = { version = "0.8.52", features = ["serde"] }
 tauri-plugin-fs = "2.4.4"
 tauri-plugin-stronghold = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-os = "2.3.2"
+pbkdf2 = "0.12.2"
+sha2 = "0.10.9"
+hmac = "0.12.1"
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png"] }
 
