@@ -24,6 +24,7 @@ import {
   FlameKindling,
 } from "lucide-react";
 import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { motion, AnimatePresence } from "motion/react";
 
@@ -33,10 +34,16 @@ interface DragDropPayload {
   position: { x: number; y: number };
 }
 
-// Helper to get file icon (simplified)
 const getFileIconByName = (name: string, isSmall = false, className = "") => {
   return <FileIcon className={cn("text-muted-foreground", className)} />;
 };
+
+// Type for media extensions from Rust backend
+interface MediaExtensions {
+  images: string[];
+  videos: string[];
+  audio: string[];
+}
 
 export function MultipleFileUploader() {
   const {
@@ -77,6 +84,22 @@ export function MultipleFileUploader() {
   const [isDragging, setIsDragging] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const lastDropRef = useRef<number>(0); // Debounce rapid drop events
+
+  // Media file extensions fetched from Rust backend
+  const [mediaFilters, setMediaFilters] = useState<{ name: string; extensions: string[] }[] | null>(null);
+
+  // Fetch supported extensions from Rust on mount
+  useEffect(() => {
+    invoke<MediaExtensions>('get_supported_extensions')
+      .then((exts) => {
+        // Combine all extensions into one filter
+        const allExtensions = [...exts.images, ...exts.videos, ...exts.audio];
+        setMediaFilters([{ name: 'Media Files', extensions: allExtensions }]);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch supported extensions:', err);
+      });
+  }, []);
 
   // Tauri native drag-drop event listeners
   useEffect(() => {
@@ -159,6 +182,7 @@ export function MultipleFileUploader() {
       const selected = await open({
         multiple: true,
         directory: false,
+        filters: mediaFilters ?? undefined,
       });
 
       if (selected) {

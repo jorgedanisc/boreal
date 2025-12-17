@@ -789,6 +789,12 @@ async fn open_cache_folder(app: AppHandle, state: State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// Get supported media file extensions for file dialog filters
+#[tauri::command]
+fn get_supported_extensions() -> file_filter::MediaExtensions {
+    file_filter::get_supported_extensions()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri::menu::{Menu, MenuItem, Submenu};
@@ -864,7 +870,8 @@ pub fn run() {
             remove_upload_item,
             initialize_upload_manager,
             open_cache_folder,
-            get_audio
+            get_audio,
+            get_supported_extensions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
