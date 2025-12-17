@@ -302,7 +302,7 @@ export function MultipleFileUploader() {
               </div>
 
               {/* Fresh Upload Toggle */}
-              <div className="flex items-center gap-2 border-l pl-4 ml-2">
+              <div className="flex items-center gap-2 pl-4 ml-2">
                 <Switch
                   id="fresh-upload-toggle"
                   checked={freshUploadEnabled}

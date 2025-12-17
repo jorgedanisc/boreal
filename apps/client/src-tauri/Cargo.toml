@@ -50,5 +50,6 @@ infer = "0.16"
 ffmpeg-next = { version = "7", features = ["build"] }
 tauri-plugin-shell = "2.3.3"
 webp-animation = "0.9"
+webp = "0.3"
 walkdir = "2.5.0"
 

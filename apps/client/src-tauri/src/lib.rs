@@ -562,11 +562,11 @@ struct AddFilesResult {
 
 #[tauri::command]
 async fn add_files_to_queue(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
     upload_state: State<'_, UploadManagerState>,
     payload: AddFilesPayload,
 ) -> Result<AddFilesResult, String> {
-    let manager_guard = upload_state.manager.lock().await;
+    let mut manager_guard = upload_state.manager.lock().await;
     let manager = manager_guard
         .as_ref()
         .ok_or("Upload manager not initialized")?;

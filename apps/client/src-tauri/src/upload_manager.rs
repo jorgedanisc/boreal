@@ -675,6 +675,8 @@ impl UploadManager {
         .await;
 
         let original_size = enc_original.len() as u64;
+        let compressed_original_size = enc_original.len();
+        let compressed_thumbnail_size = enc_thumbnail.as_ref().map(|t| t.len());
 
         // Create progress channel for real-time updates
         let (progress_tx, mut progress_rx) = mpsc::channel::<(u64, u64)>(32);
@@ -795,10 +797,29 @@ impl UploadManager {
         Self::update_status_static(queue, app_handle, &id, UploadStatus::Completed).await;
         Self::update_progress_static(queue, app_handle, &id, 1.0, item.size).await; // 100%
 
+        // Log compression stats
+        let thumb_size_str = if let Some(t_len) = compressed_thumbnail_size {
+            format_bytes(t_len as u64)
+        } else {
+            "N/A".to_string()
+        };
+
+        let original_size_str = format_bytes(item.size);
+        let compressed_original_str = format_bytes(compressed_original_size as u64);
+
+        eprintln!("[Upload {}] Compression Stats:", id);
+        eprintln!("+----------------+----------------+----------------------+");
+        eprintln!("| Original Size  | Compressed Orig| Compressed Thumb     |");
+        eprintln!("+----------------+----------------+----------------------+");
+        eprintln!(
+            "| {:<14} | {:<14} | {:<20} |",
+            original_size_str, compressed_original_str, thumb_size_str
+        );
+        eprintln!("+----------------+----------------+----------------------+");
         // Emit completion event
         app_handle
             .emit("upload:completed", serde_json::json!({ "id": id }))
-            .ok();
+            .unwrap_or_else(|e| eprintln!("Failed to emit upload:completed event: {}", e));
 
         Ok(())
     }
@@ -895,5 +916,21 @@ impl UploadManager {
     async fn emit_queue_changed(&self) {
         let state = self.get_state().await;
         self.app_handle.emit("upload:queue_changed", state).ok();
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
     }
 }
