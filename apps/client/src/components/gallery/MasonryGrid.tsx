@@ -1,7 +1,7 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { useState, useRef, useMemo, useCallback, memo } from 'react';
 import { useGesture } from '@use-gesture/react';
 import { Music } from 'lucide-react';
+import { useResizeObserver } from 'usehooks-ts';
 
 export interface MediaItem {
   id: string;
@@ -20,9 +20,26 @@ interface MasonryGridProps {
   onColumnsChange?: (columns: number) => void;
 }
 
+// Column limits
+const MIN_COLUMNS = 1;
+const MAX_COLUMNS = 8;
+
+// CSS transition duration for smooth zooming
+const TRANSITION_DURATION = '0.3s';
+
 /**
- * Custom masonry grid with motion animations
- * Supports pinch-to-zoom (column adjustment) and smooth layout transitions
+ * Custom masonry grid with ABSOLUTE POSITIONING
+ * 
+ * CORE ARCHITECTURE CHANGE:
+ * Previously, we used separate arrays for each column. This caused React to unmount/remount
+ * items when they moved between columns during zoom, causing "blinking".
+ * 
+ * NEW APPROACH:
+ * - Flat list of items in a single relative container
+ * - Absolute positioning (transform: translate3d) for every item
+ * - Memoized layout calculation (x,y coordinates)
+ * - CSS transitions for smooth movement
+ * - Items NEVER unmount during zoom, eliminating blink completely
  */
 export function MasonryGrid({
   items,
@@ -33,64 +50,138 @@ export function MasonryGrid({
 }: MasonryGridProps) {
   const [columns, setColumns] = useState(initialColumns);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { width: containerWidth = 0 } = useResizeObserver({
+    ref: containerRef,
+    box: 'border-box',
+  });
 
-  // Calculate which column each item goes into for masonry effect
-  const columnItems = useMemo(() => {
-    const cols: MediaItem[][] = Array.from({ length: columns }, () => []);
-    const heights = Array(columns).fill(0);
+  /**
+   * Layout Calculation Engine
+   * Computes the exact (x, y) coordinates for every item based on current column count.
+   * Returns:
+   *  - layout: Array of position data { id, x, y, width, height }
+   *  - containerHeight: Total height of the grid
+   */
+  const { layout, containerHeight } = useMemo(() => {
+    // Avoid division by zero
+    if (!containerWidth || columns === 0) return { layout: [], containerHeight: 0 };
 
-    items.forEach((item) => {
+    const colWidth = (containerWidth - (columns - 1) * spacing) / columns;
+    const colHeights = Array(columns).fill(0);
+
+    // Position map for fast lookup if needed, or just map original items to positions
+    const newLayout = items.map((item) => {
       // Find shortest column
-      const shortestCol = heights.indexOf(Math.min(...heights));
-      cols[shortestCol].push(item);
+      const colIndex = colHeights.indexOf(Math.min(...colHeights));
 
-      // Estimate height based on aspect ratio (or fixed for audio)
-      const aspectRatio = item.mediaType === 'audio'
-        ? 1
-        : (item.height / item.width) || 1;
-      heights[shortestCol] += aspectRatio;
+      const x = colIndex * (colWidth + spacing);
+      const y = colHeights[colIndex];
+
+      // Calculate aspect-ratio based height
+      const w = item.width > 0 ? item.width : 1;
+      const h = item.height > 0 ? item.height : 1;
+      // For audio, force square. For others, maintain aspect ratio.
+      const ratio = item.mediaType === 'audio' ? 1 : (w / h);
+      const itemHeight = colWidth / ratio;
+
+      // Update column height
+      colHeights[colIndex] += itemHeight + spacing;
+
+      return {
+        item,
+        x,
+        y,
+        width: colWidth,
+        height: itemHeight,
+      };
     });
 
-    return cols;
-  }, [items, columns]);
+    return {
+      layout: newLayout,
+      containerHeight: Math.max(...colHeights)
+    };
+  }, [items, columns, containerWidth, spacing]);
 
-  // Column adjustment handler
+
+  // Column adjustment handler with cooldown for rate-limiting
+  const lastChangeTime = useRef(0);
+  const COOLDOWN_MS = 250; // Minimum time between column changes
+
   const adjustColumns = useCallback((delta: number) => {
+    const now = Date.now();
+    // Enforce cooldown between changes (but allow first change instantly)
+    if (lastChangeTime.current > 0 && now - lastChangeTime.current < COOLDOWN_MS) {
+      return; // Skip - too soon since last change
+    }
+
     setColumns((c) => {
-      const newCols = Math.max(2, Math.min(8, c + delta));
-      onColumnsChange?.(newCols);
+      const newCols = Math.max(MIN_COLUMNS, Math.min(MAX_COLUMNS, c + delta));
+      if (newCols !== c) {
+        lastChangeTime.current = now;
+        onColumnsChange?.(newCols);
+      }
       return newCols;
     });
   }, [onColumnsChange]);
 
-  // Gestures: pinch to zoom & ctrl/cmd + wheel
+  // Track accumulated wheel delta for smooth zooming
+  const wheelAccumulator = useRef(0);
+  const WHEEL_THRESHOLD = 10; // Very low for instant start
+
+  // Track pinch scale for more reliable detection
+  const pinchAccumulator = useRef(0);
+  const PINCH_THRESHOLD = 0.08; // Accumulated scale change needed
+
   useGesture(
     {
-      onPinch: ({ offset: [d], memo, last, down }) => {
-        if (!memo) memo = columns;
-
-        // Visual feedback during pinch could use transform: scale (future improvement)
-        // For now, simple column snapping with tuned transition
-
-        if (d > 1.5 && columns > 2) {
-          adjustColumns(-1);
-          return columns;
-        } else if (d < 0.7 && columns < 8) {
-          adjustColumns(1);
-          return columns;
+      // onPinch handles actual touch pinch (mobile/tablets) and some trackpads
+      onPinch: ({ offset: [scale], direction: [dir], first }) => {
+        // Reset accumulator on first touch
+        if (first) {
+          pinchAccumulator.current = 0;
         }
-        return memo;
+
+        // Accumulate scale change based on direction
+        // dir > 0 = zooming in (pinch out), dir < 0 = zooming out (pinch in)
+        pinchAccumulator.current += dir * 0.02;
+
+        if (pinchAccumulator.current >= PINCH_THRESHOLD && columns > MIN_COLUMNS) {
+          adjustColumns(-1); // Zoom in = fewer columns
+          pinchAccumulator.current = 0;
+        } else if (pinchAccumulator.current <= -PINCH_THRESHOLD && columns < MAX_COLUMNS) {
+          adjustColumns(1); // Zoom out = more columns
+          pinchAccumulator.current = 0;
+        }
       },
-      onWheel: ({ delta: [, dy], ctrlKey, metaKey }) => {
+      // onWheel with ctrlKey/metaKey handles trackpad pinch on macOS
+      // (macOS sends trackpad pinch as wheel events with ctrlKey: true)
+      onWheel: ({ event, delta: [, dy], ctrlKey, metaKey }) => {
         if (ctrlKey || metaKey) {
-          if (dy < -20 && columns > 2) adjustColumns(-1);
-          else if (dy > 20 && columns < 8) adjustColumns(1);
+          event.preventDefault();
+          event.stopPropagation();
+
+          wheelAccumulator.current += dy;
+
+          if (wheelAccumulator.current >= WHEEL_THRESHOLD && columns < MAX_COLUMNS) {
+            adjustColumns(1);
+            wheelAccumulator.current = 0;
+          } else if (wheelAccumulator.current <= -WHEEL_THRESHOLD && columns > MIN_COLUMNS) {
+            adjustColumns(-1);
+            wheelAccumulator.current = 0;
+          }
+        } else {
+          wheelAccumulator.current = 0;
         }
       },
     },
     {
       target: containerRef,
       eventOptions: { passive: false },
+      // Enable pinch gesture detection
+      pinch: {
+        scaleBounds: { min: 0.5, max: 3 },
+        rubberband: true,
+      },
     }
   );
 
@@ -102,63 +193,57 @@ export function MasonryGrid({
   return (
     <div
       ref={containerRef}
-      className="w-full touch-pan-y"
-      style={{ touchAction: 'pan-y' }}
+      className="w-full relative touch-pan-y overflow-hidden"
+      style={{
+        touchAction: 'pan-y',
+        height: containerHeight, // Explicit height from layout calc
+        transition: `height ${TRANSITION_DURATION} ease-out` // Smooth container height change
+      }}
     >
-      <motion.div
-        layout
-        className="grid"
-        style={{
-          gridTemplateColumns: `repeat(${columns}, 1fr)`,
-          gap: spacing,
-        }}
-        // Smoother, less bouncy transition for layout changes
-        transition={{ type: 'spring', stiffness: 200, damping: 25, mass: 0.5 }}
-      >
-        {columnItems.map((column, colIndex) => (
-          <div key={colIndex} className="flex flex-col" style={{ gap: spacing }}>
-            <AnimatePresence mode="popLayout">
-              {column.map((item) => (
-                <motion.div
-                  key={item.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                  className="relative cursor-pointer overflow-hidden rounded-sm"
-                  onClick={() => onItemClick?.(getGlobalIndex(item))}
-                >
-                  <GridItem item={item} />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        ))}
-      </motion.div>
+      {layout.map(({ item, x, y, width, height }) => (
+        <div
+          key={item.id}
+          className="absolute top-0 left-0 will-change-transform"
+          style={{
+            width: width,
+            height: height,
+            transform: `translate3d(${x}px, ${y}px, 0)`,
+            // Fluid Layout Transitions
+            transition: `transform ${TRANSITION_DURATION} ease-out, width ${TRANSITION_DURATION} ease-out, height ${TRANSITION_DURATION} ease-out`
+          }}
+        >
+          <GridItem
+            item={item}
+            onClick={() => onItemClick?.(getGlobalIndex(item))}
+          />
+        </div>
+      ))}
     </div>
   );
 }
 
 /**
- * Render individual grid item based on media type
+ * Memoized grid item.
+ * NOTE: Since we control width/height in parent container style,
+ * this component just fills 100% of the parent absolute div.
  */
-function GridItem({ item }: { item: MediaItem }) {
-  // Use width/height from item (defaults to 1 if missing)
-  // Ensure we don't divide by zero
-  const w = item.width || 500;
-  const h = item.height || 500;
-  const ratio = w / h;
+const GridItem = memo(function GridItem({
+  item,
+  onClick
+}: {
+  item: MediaItem;
+  onClick: () => void;
+}) {
 
-  // Audio: show music icon placeholder (square)
+  // Audio: show music icon placeholder
   if (item.mediaType === 'audio') {
     return (
       <div
-        className="bg-muted/30 border border-border flex items-center justify-center group hover:bg-muted/50 transition-colors"
-        style={{ aspectRatio: '1/1' }}
+        className="w-full h-full bg-muted/30 border border-border flex items-center justify-center group hover:bg-muted/50 cursor-pointer overflow-hidden transition-colors"
+        onClick={onClick}
       >
         <div className="text-center p-4">
-          <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
+          <div className="w-12 h-12 bg-primary/10 flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
             <Music className="w-6 h-6 text-primary" />
           </div>
           <span className="text-xs font-medium text-muted-foreground truncate max-w-[100px] block">
@@ -170,21 +255,22 @@ function GridItem({ item }: { item: MediaItem }) {
   }
 
   // Image/Video: show thumbnail
-  // Use aspect-ratio CSS property
   return (
-    <div className="relative w-full" style={{ aspectRatio: ratio }}>
+    <div
+      className="w-full h-full relative cursor-pointer overflow-hidden group bg-muted"
+      onClick={onClick}
+    >
       {item.src ? (
-        <motion.img
+        <img
           src={item.src}
           alt={item.alt}
-          className="w-full h-full object-cover absolute inset-0"
-          whileHover={{ scale: 1.05 }}
-          transition={{ duration: 0.2 }}
+          className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
           loading="lazy"
+          decoding="async"
         />
       ) : (
         <div className="w-full h-full bg-muted animate-pulse absolute inset-0" />
       )}
     </div>
   );
-}
+});

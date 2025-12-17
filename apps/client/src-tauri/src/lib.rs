@@ -241,6 +241,8 @@ struct Photo {
     created_at: String,
     tier: String,
     media_type: String,
+    width: u32,
+    height: u32,
 }
 
 #[tauri::command]
@@ -249,7 +251,7 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
     let conn = db_guard.as_ref().ok_or("DB not initialized")?;
 
     let mut stmt = conn
-        .prepare("SELECT id, filename, created_at, tier, media_type FROM photos ORDER BY created_at DESC")
+        .prepare("SELECT id, filename, created_at, tier, media_type, width, height FROM photos ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
 
     let photos = stmt
@@ -262,6 +264,8 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
                 media_type: row
                     .get::<_, Option<String>>(4)?
                     .unwrap_or_else(|| "image".to_string()),
+                width: row.get::<_, Option<u32>>(5)?.unwrap_or(0),
+                height: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
             })
         })
         .map_err(|e| e.to_string())?;

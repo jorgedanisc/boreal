@@ -87,14 +87,15 @@ export default function Gallery() {
   }, [completedCount, lastCompletedCount]);
 
   // Map photos to MediaItem format for MasonryGrid
+  // Pass through actual dimensions - MasonryGrid handles missing values
   const mediaItems: MediaItem[] = useMemo(() => {
     return photos.map(p => {
       const mediaType = (p.media_type || 'image') as 'image' | 'video' | 'audio';
       return {
         id: p.id,
         src: thumbnails[p.id] || '',
-        width: p.width > 0 ? p.width : 500,
-        height: p.height > 0 ? p.height : 500,
+        width: p.width,  // Pass actual value, even if 0
+        height: p.height, // Pass actual value, even if 0
         alt: p.filename,
         mediaType,
       };
