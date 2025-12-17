@@ -20,43 +20,6 @@ When you create a vault, the app opens AWS CloudFormation in your browser with a
 
 The stack outputs a **Vault Code**—a base64-encoded vault file containing your credentials and KEK. Paste this into the app to complete setup.
 
-Each vault is a separate CloudFormation stack. Create as many as you need.
-
-### IAM Permissions
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject",
-        "s3:ListBucket",
-        "s3:RestoreObject"
-      ],
-      "Resource": [
-        "arn:aws:s3:::boreal-vault-{id}",
-        "arn:aws:s3:::boreal-vault-{id}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "iam:CreateAccessKey",
-        "iam:DeleteAccessKey",
-        "iam:ListAccessKeys"
-      ],
-      "Resource": "arn:aws:iam::*:user/${aws:username}"
-    }
-  ]
-}
-```
-
-The IAM user can manage its own access keys, enabling in-app credential rotation.
-
 ---
 
 ## S3 Layout
@@ -65,26 +28,32 @@ The IAM user can manage its own access keys, enabling in-app credential rotation
 boreal-vault-{id}/
 ├── vault-key.enc                   # KEK-encrypted vault key
 ├── originals/
-│   └── {uuid}.enc                  # Glacier Deep Archive or Instant Retrieval
+│   └── {uuid}.enc                  # User chooses: Glacier IR or Deep Archive
 ├── thumbnails/
 │   └── {uuid}.enc                  # S3 Standard
 └── manifest.db.enc                 # Encrypted SQLite database
 ```
 
-### Lifecycle Rules
+### Storage Tier Strategy
 
-```yaml
-Rules:
-  - ID: transition-originals-to-glacier
-    Filter:
-      Prefix: originals/
-    Status: Enabled
-    Transitions:
-      - Days: 0
-        StorageClass: DEEP_ARCHIVE  # or GLACIER_IR
-```
+Originals are moved to Glacier by default for cost efficiency, but the user can choose between two options:
 
-Thumbnails stay in Standard for instant access.
+**Option 1: Deep Archive (Coldest)** — $0.99/TB/month
+- Retrieval takes 12-48 hours
+- Best for long-term archival, infrequent access
+- Use bulk restore tier to minimize costs
+
+**Option 2: Glacier Instant Retrieval (Balanced)** — $4.00/TB/month
+- Retrieval is instant
+- Best for active libraries where you may need quick access
+- Still significantly cheaper than Standard ($23/TB/month)
+
+### Lifecycle Rules for Cold Storage
+
+**What's "Fresh Upload"?**
+When you add new photos or videos to your Vault you may want to have the originals around for some flexible time before they get moved to cold storage. On the process of uploading if you toggle the "Fresh Upload" option, the originals will stay fresh or 2 months in S3 Standard storage, after that they transition to your chosen Glacier tier.
+
+Thumbnails always stay in Standard for instant browsing.
 
 ---
 
@@ -230,7 +199,7 @@ sequenceDiagram
 
     User->>App: Select files
     App->>App: For each file:
-    App->>App: Generate thumbnail (AVIF, 50KB max)
+    App->>App: Generate thumbnail (WebP, 40KB max)
     App->>App: Extract EXIF metadata
     App->>App: Generate CLIP embedding
     App->>App: Encrypt original

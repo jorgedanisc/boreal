@@ -1,12 +1,14 @@
 # Cost Analysis
 
-## Storage Costs (AWS us-east-1 pricing)
+## Storage Classes
 
-| Storage Class | Cost per TB/month | Use Case |
-|---------------|-------------------|----------|
-| S3 Standard | $23.00 | Thumbnails, manifest |
-| S3 Glacier Instant Retrieval | $4.00 | Active photo libraries |
-| S3 Glacier Deep Archive | $0.99 | Long-term archival |
+Choose your tier based on access patterns:
+
+| Storage Class | Cost/TB/month | Retrieval Speed | Best For |
+|---|---|---|---|
+| S3 Standard | $23.00 | Instant | Thumbnails, manifest, fresh uploads (first 2 months) |
+| Glacier Instant Retrieval | $4.00 | Instant | Active photo libraries, when instant access matters |
+| Glacier Deep Archive | $0.99 | 12-48 hours | Long-term archival, infrequent access |
 
 ## Detailed Cost Scenarios
 
@@ -116,15 +118,15 @@
 
 ### Cloud Storage Services
 
-| Service | 1TB Cost/year | Privacy | Offline | You Own Data | Lock-in |
-|---------|---------------|---------|---------|--------------|---------|
-| **Boreal (Deep Archive)** | ~$14 | Full | Yes | Yes | None (relative to the App, not the AWS account) |
-| **Boreal (Instant Retrieval)** | ~$48 | Full | Yes | Yes | None (relative to the App, not the AWS account) |
-| Google Photos | $100 (Google One) | Low | Partial | No | High |
-| iCloud | $120 | Medium | Partial | No | High |
-| Amazon Photos | $60 (Prime) | Low | Partial | No | Medium |
-| Dropbox | $120 | Medium | Yes | No | Medium |
-| Backblaze B2 | $60 | High | No | Yes | Low |
+| Service | 1TB Cost/year | Privacy | Offline | You Own Data | Lock-in | Retrieval Speed |
+|---|---|---|---|---|---|---|
+| **Boreal (Deep Archive)** | ~$14 | Full | Yes | Yes | None | 12-48h restore |
+| **Boreal (Instant Retrieval)** | ~$48 | Full | Yes | Yes | None | Instant |
+| Google Photos | $100 (Google One) | Low | Partial | No | High | Instant |
+| iCloud | $120 | Medium | Partial | No | High | Instant |
+| Amazon Photos | $60 (Prime) | Low | Partial | No | Medium | Instant |
+| Dropbox | $120 | Medium | Yes | No | Medium | Instant |
+| Backblaze B2 | $60 | High | No | Yes | Low | Instant |
 
 ### Self-Hosted Solutions
 

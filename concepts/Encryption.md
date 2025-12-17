@@ -115,7 +115,7 @@ If someone gains access to your S3 bucket without your vault file, they see only
 ## Uploading a File
 
 ```
-1. Generate thumbnail locally (AVIF, max 50KB)
+1. Generate thumbnail locally (WebP, max 40KB)
 2. Extract EXIF metadata
 3. Generate CLIP embedding for AI search
 4. Encrypt original with vault_key
@@ -126,6 +126,8 @@ If someone gains access to your S3 bucket without your vault file, they see only
 ```
 
 All processing happens on your device. The file is encrypted before it leaves.
+
+*For detailed format specifications and processing parameters, see [Media Processing](../docs/MediaProcessing.md).*
 
 ---
 
@@ -181,8 +183,13 @@ There is no "forgot password" flow. The vault file is the only key.
 
 - **Encryption**: XChaCha20-Poly1305 (via libsodium or age)
 - **Key derivation**: Not needed (KEK is random, not password-derived)
-- **Thumbnail format**: AVIF (max 50KB, 1280px longest edge)
+- **Thumbnail format**: WebP (~40KB max, 1280px longest edge)
+- **Image original format**: WebP (lossy quality 95 or lossless)
+- **Video original format**: H.265 MP4 (CRF 18 for visually lossless)
+- **Audio format**: Opus (128kbps, transparent quality)
 - **Embeddings**: CLIP ViT-B/32 via ONNX (512-dim vectors)
+
+*For detailed encoding parameters, see [Media Processing](../docs/MediaProcessing.md).*
 
 ---
 

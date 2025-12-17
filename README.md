@@ -32,12 +32,14 @@ Choose your tradeoff between cost and convenience.
 
 | | **Deep Archive** | **Instant Retrieval** |
 |---|---|---|
-| **Best for** | Infrequently accessed originals | Frequently accessed originals |
+| **Best for** | Infrequently accessed originals | Active photo libraries |
 | **Cost** | ~$1/TB/month | ~$4/TB/month |
 | **Thumbnails** | Instant | Instant |
 | **Originals** | 12-48 hour restore | Instant |
 
-Thumbnails are always instantly accessible. Only original files follow the storage tier you choose.
+Thumbnails are always instantly accessible. Only original files follow the storage tier you choose at setup.
+
+**Note**: New photos from "Fresh Upload" stay in fast storage for 2 months before transitioning to your chosen tier, giving you time to verify quality and fix metadata.
 
 ---
 
