@@ -28,7 +28,7 @@ export function SetupWizard() {
     region: "",
     tier: null,
   });
-  const [error, setError] = useState<string | null>(null);
+  const [, setError] = useState<string | null>(null);
 
   const handleCreateVault = () => {
     setState(s => ({ ...s, step: "configure" }));

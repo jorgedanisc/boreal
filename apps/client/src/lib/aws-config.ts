@@ -1,3 +1,5 @@
+import { customAlphabet } from 'nanoid';
+
 export interface AwsRegion {
   code: string;
   name: string;
@@ -53,8 +55,18 @@ export const STORAGE_TIERS: StorageTierOption[] = [
 export const CLOUDFORMATION_TEMPLATE_URL =
   "https://boreal-production-mytemplatebucketbucket-htstbonh.s3.eu-west-1.amazonaws.com/templates/boreal-template.yaml";
 
+/**
+ * Generates a unique stack name with a random suffix.
+ * CloudFormation stack names must be unique within an account/region.
+ */
+function generateUniqueStackName(): string {
+  const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 12);
+  const randomSuffix = nanoid(16);
+  return `boreal-vault-${randomSuffix}`;
+}
+
 export function getCloudFormationQuickCreateUrl(region: string, tier: StorageTier): string {
-  const stackName = "boreal-vault";
+  const stackName = generateUniqueStackName();
   const templateUrl = encodeURIComponent(CLOUDFORMATION_TEMPLATE_URL);
   const storageTier = tier === "deep-archive" ? "DEEP_ARCHIVE" : "GLACIER_IR";
 

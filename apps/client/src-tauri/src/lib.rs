@@ -1,21 +1,36 @@
+mod cache;
 mod crypto;
 mod db;
+mod file_filter;
 mod image_processing;
+mod media_processor;
 mod storage;
+mod upload_manager;
 mod vault;
 
+use crate::cache::ThumbnailCache;
 use crate::storage::Storage;
+use crate::upload_manager::{QueueState, UploadItem, UploadManager};
 use crate::vault::VaultConfig;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rusqlite::Connection;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
 struct AppState {
-    storage: Mutex<Option<Storage>>,
-    db: Mutex<Option<Connection>>,
-    config: Mutex<Option<VaultConfig>>,
+    storage: Arc<Mutex<Option<Storage>>>,
+    db: Arc<Mutex<Option<Connection>>>,
+    config: Arc<Mutex<Option<VaultConfig>>>,
+}
+
+struct CacheState {
+    thumbnail_cache: Mutex<Option<ThumbnailCache>>,
+}
+
+struct UploadManagerState {
+    manager: Mutex<Option<UploadManager>>,
 }
 
 // Commands
@@ -54,7 +69,7 @@ async fn load_vault(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     // 5. Update State
     *state.storage.lock().await = Some(storage);
     *state.db.lock().await = Some(conn);
-    *state.config.lock().await = Some(config);
+    *state.config.lock().await = Some(config.clone());
 
     Ok(())
 }
@@ -242,8 +257,22 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
 }
 
 #[tauri::command]
-async fn get_thumbnail(state: State<'_, AppState>, id: String) -> Result<String, String> {
-    // Returns Base64
+async fn get_thumbnail(
+    state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
+    id: String,
+) -> Result<String, String> {
+    // 1. Check local cache first
+    {
+        let cache_guard = cache_state.thumbnail_cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            if let Some(cached_bytes) = cache.get(&id) {
+                return Ok(BASE64.encode(&cached_bytes));
+            }
+        }
+    }
+
+    // 2. Cache miss - download from S3
     let config_guard = state.config.lock().await;
     let config = config_guard.as_ref().ok_or("Vault not loaded")?;
 
@@ -253,19 +282,27 @@ async fn get_thumbnail(state: State<'_, AppState>, id: String) -> Result<String,
     // Try to read from S3 (Phase 1 simplistic: always download)
     // TODO: Local Cache
 
-    let thumbnail_key = format!("thumbnails/{}.avif", id);
+    let thumbnail_key = format!("thumbnails/{}.webp", id);
     let enc_bytes = storage
         .download_file(&thumbnail_key)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Decrypt
+    // 3. Decrypt
     let vault_key = BASE64.decode(&config.vault_key).unwrap();
     let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
 
     let dec_bytes = crypto::decrypt(&enc_bytes, &key_arr).map_err(|e| e.to_string())?;
 
-    // Convert to Base64 for frontend
+    // 4. Store in cache for next time
+    {
+        let cache_guard = cache_state.thumbnail_cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            cache.put(&id, &dec_bytes).ok(); // Ignore cache errors
+        }
+    }
+
+    // 5. Return Base64
     Ok(BASE64.encode(&dec_bytes))
 }
 
@@ -355,18 +392,191 @@ async fn decrypt_import(encrypted_data: String, pin: String) -> Result<String, S
     Ok(json)
 }
 
+// ============ Upload Queue Commands ============
+
+#[derive(serde::Deserialize)]
+struct AddFilesPayload {
+    paths: Vec<String>,
+    fresh_upload: bool,
+}
+
+#[derive(serde::Serialize)]
+struct AddFilesResult {
+    items: Vec<UploadItem>,
+    fresh_upload_auto_disabled: bool,
+}
+
+#[tauri::command]
+async fn add_files_to_queue(
+    state: State<'_, AppState>,
+    upload_state: State<'_, UploadManagerState>,
+    payload: AddFilesPayload,
+) -> Result<AddFilesResult, String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    let paths: Vec<PathBuf> = payload.paths.iter().map(PathBuf::from).collect();
+
+    // First, filter out unsupported files and create items
+    let mut valid_paths = Vec::new();
+    for path in paths {
+        if file_filter::is_supported_media(&path) {
+            valid_paths.push(path);
+        }
+    }
+
+    // Create temporary items to check if we should auto-disable fresh upload
+    let temp_items: Vec<UploadItem> = valid_paths
+        .iter()
+        .filter_map(|p| UploadItem::new(p.clone(), payload.fresh_upload).ok())
+        .collect();
+
+    let fresh_upload_auto_disabled = manager.should_disable_fresh_upload(&temp_items);
+
+    let actual_fresh_upload = if fresh_upload_auto_disabled {
+        false
+    } else {
+        payload.fresh_upload
+    };
+
+    // Now add with the correct fresh_upload flag
+    let items = manager
+        .add_files(valid_paths, actual_fresh_upload)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(AddFilesResult {
+        items,
+        fresh_upload_auto_disabled,
+    })
+}
+
+#[tauri::command]
+async fn get_upload_queue_status(
+    upload_state: State<'_, UploadManagerState>,
+) -> Result<QueueState, String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    Ok(manager.get_state().await)
+}
+
+#[tauri::command]
+async fn start_upload(upload_state: State<'_, UploadManagerState>) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.start_processing().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cancel_upload(
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.cancel(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_finished_uploads(upload_state: State<'_, UploadManagerState>) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.clear_finished().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn pause_upload(
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.pause(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn resume_upload(
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.resume(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn retry_upload(
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    manager.retry(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn initialize_upload_manager(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    upload_state: State<'_, UploadManagerState>,
+) -> Result<(), String> {
+    let (manager, _cancel_rx) = UploadManager::new(
+        app,
+        state.storage.clone(),
+        state.config.clone(),
+        state.db.clone(),
+    );
+    *upload_state.manager.lock().await = Some(manager);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .manage(AppState {
-            storage: Mutex::new(None),
-            db: Mutex::new(None),
-            config: Mutex::new(None),
+            storage: Arc::new(Mutex::new(None)),
+            db: Arc::new(Mutex::new(None)),
+            config: Arc::new(Mutex::new(None)),
+        })
+        .manage(UploadManagerState {
+            manager: Mutex::new(None),
+        })
+        .manage(CacheState {
+            thumbnail_cache: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             import_vault,
@@ -379,7 +589,17 @@ pub fn run() {
             export_vault,
             get_active_vault,
             create_export_qr,
-            decrypt_import
+            decrypt_import,
+            // Upload queue commands
+            add_files_to_queue,
+            get_upload_queue_status,
+            start_upload,
+            cancel_upload,
+            clear_finished_uploads,
+            pause_upload,
+            resume_upload,
+            retry_upload,
+            initialize_upload_manager
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

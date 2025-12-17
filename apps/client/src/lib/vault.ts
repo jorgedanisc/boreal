@@ -88,6 +88,9 @@ export interface Photo {
   filename: string;
   created_at: string;
   tier: string;
+  width: number;
+  height: number;
+  s3_key: string;
 }
 
 export async function getPhotos(): Promise<Photo[]> {

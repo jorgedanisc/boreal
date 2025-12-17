@@ -45,5 +45,8 @@ tauri-plugin-os = "2.3.2"
 pbkdf2 = "0.12.2"
 sha2 = "0.10.9"
 hmac = "0.12.1"
-image = { version = "0.25.9", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png", "webp"] }
+infer = "0.16"
+ffmpeg-next = { version = "7", features = ["build"] }
+tauri-plugin-shell = "2.3.3"
 

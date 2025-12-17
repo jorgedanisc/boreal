@@ -11,6 +11,17 @@
     "dialog:default",
     "fs:default",
     "deep-link:default",
-    "core:webview:allow-print"
+    "core:webview:allow-print",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/ffmpeg",
+          "cmd": "ffmpeg",
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }
