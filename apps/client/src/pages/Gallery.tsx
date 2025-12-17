@@ -1,24 +1,22 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getPhotos, getThumbnail, Photo, getActiveVault, VaultPublic } from '../lib/vault';
 import { ChevronLeft, Image as ImageIcon } from 'lucide-react';
 import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
-import { UploadPanel } from '@/components/upload/UploadPanel';
+import { MultipleFileUploader } from '@/components/upload/MultipleFileUploader';
 import { UploadTrigger } from '@/components/upload/UploadTrigger';
 import { useUploadStore } from '@/stores/upload_store';
 import { invoke } from '@tauri-apps/api/core';
 
-// Gallery Libraries
-import PhotoAlbum from "react-photo-album";
-import "react-photo-album/masonry.css";
+// Custom Gallery Components
+import { MasonryGrid, MediaItem } from '@/components/gallery/MasonryGrid';
+import { AudioPlayer } from '@/components/gallery/AudioPlayer';
+
+// Lightbox
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
-import Video from "yet-another-react-lightbox/plugins/video";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
-
-// Gestures
-import { useGesture } from '@use-gesture/react';
 
 export default function Gallery() {
   const navigate = useNavigate();
@@ -28,12 +26,11 @@ export default function Gallery() {
   const { getCompletedCount } = useUploadStore();
   const [lastCompletedCount, setLastCompletedCount] = useState(0);
 
-  // Layout State
-  const [columns, setColumns] = useState(4);
-  const containerRef = useRef<HTMLDivElement>(null);
-
   // Lightbox State
-  const [index, setIndex] = useState(-1);
+  const [lightboxIndex, setLightboxIndex] = useState(-1);
+
+  // Audio Player State
+  const [audioPlayer, setAudioPlayer] = useState<{ id: string; filename: string } | null>(null);
 
   // Initialize upload manager when vault is loaded
   useEffect(() => {
@@ -54,15 +51,16 @@ export default function Gallery() {
       const list = await getPhotos();
       setPhotos(list);
 
-      // Load thumbnails lazily
+      // Load thumbnails lazily (skip audio - no thumbnails)
       const BATCH_SIZE = 10;
-      for (let i = 0; i < list.length; i += BATCH_SIZE) {
-        const batch = list.slice(i, i + BATCH_SIZE);
+      const imageVideoPhotos = list.filter(p => (p.media_type || 'image') !== 'audio');
+
+      for (let i = 0; i < imageVideoPhotos.length; i += BATCH_SIZE) {
+        const batch = imageVideoPhotos.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (p) => {
           if (!thumbnails[p.id]) {
             try {
               const b64 = await getThumbnail(p.id);
-              // Use WebP MIME type as per backend changes
               setThumbnails(prev => ({ ...prev, [p.id]: `data:image/webp;base64,${b64}` }));
             } catch (e) {
               console.error("Failed to load thumbnail for " + p.id, e);
@@ -80,107 +78,54 @@ export default function Gallery() {
   }, []);
 
   // Refresh photos when uploads complete
+  const completedCount = getCompletedCount();
   useEffect(() => {
-    const currentCompleted = getCompletedCount();
-    if (currentCompleted > lastCompletedCount) {
+    if (completedCount > lastCompletedCount) {
       loadPhotos();
-      setLastCompletedCount(currentCompleted);
+      setLastCompletedCount(completedCount);
     }
-  }, [getCompletedCount()]);
+  }, [completedCount, lastCompletedCount]);
 
-  // Gestures for Pinch-to-Zoom (Column adjustment)
-  useGesture(
-    {
-      onPinch: ({ offset: [d], memo }) => {
-        // d is scale factor relative to initial touch
-        if (!memo) memo = columns;
-
-        // Simple logic: zoom in (d > 1) -> fewer columns, zoom out (d < 1) -> more columns
-        if (d > 1.1 && columns > 2) {
-          setColumns(c => Math.max(2, c - 1));
-          return columns;
-        } else if (d < 0.9 && columns < 8) {
-          setColumns(c => Math.min(8, c + 1));
-          return columns;
-        }
-        return memo;
-      },
-      onWheel: ({ delta: [, dy], active, memo, ctrlKey, metaKey }) => {
-        if (!active) return;
-        if (!memo) memo = columns;
-
-        // Strictly require Ctrl (Windows/Linux) or Meta (Mac Command) key for zoom
-        if (ctrlKey || metaKey) {
-          if (dy < -20 && columns > 2) {
-            setColumns(c => Math.max(2, c - 1));
-            return columns;
-          } else if (dy > 20 && columns < 8) {
-            setColumns(c => Math.min(8, c + 1));
-            return columns;
-          }
-        }
-        return memo;
-      }
-    },
-    {
-      target: containerRef,
-      eventOptions: { passive: false },
-      wheel: { eventOptions: { passive: false, modifierKey: undefined } } // We handle modifier key manually
-    }
-  );
-
-  // Map photos to React Photo Album format
-  const albumPhotos = useMemo(() => {
+  // Map photos to MediaItem format for MasonryGrid
+  const mediaItems: MediaItem[] = useMemo(() => {
     return photos.map(p => {
-      // Fallback dimensions if 0
-      const width = p.width > 0 ? p.width : 500;
-      const height = p.height > 0 ? p.height : 500;
-
+      const mediaType = (p.media_type || 'image') as 'image' | 'video' | 'audio';
       return {
-        src: thumbnails[p.id] || "", // Thumbnail for grid
-        width,
-        height,
-        key: p.id,
+        id: p.id,
+        src: thumbnails[p.id] || '',
+        width: p.width > 0 ? p.width : 500,
+        height: p.height > 0 ? p.height : 500,
         alt: p.filename,
-        // Extra data for Lightbox
-        originalKey: p.s3_key,
-        mediaType: p.filename.match(/\.(mp4|mov|avi|mkv)$/i) ? 'video' :
-          p.filename.match(/\.(mp3|wav|ogg|m4a|flac)$/i) ? 'audio' : 'image',
+        mediaType,
       };
     });
   }, [photos, thumbnails]);
 
-  // Lightbox slides
+  // Lightbox slides (for images/videos only)
   const slides = useMemo(() => {
-    return photos.map(p => {
-      const isVideo = p.filename.match(/\.(mp4|mov|avi|mkv)$/i);
-      const isAudio = p.filename.match(/\.(mp3|wav|ogg|m4a|flac)$/i);
-
-      if (isVideo) {
-        return {
-          type: "video" as const,
-          // TODO: Real streaming URL
-          sources: [
-            {
-              src: "",
-              type: "video/mp4"
-            }
-          ],
-          poster: thumbnails[p.id]
-        }
-      } else if (isAudio) {
-        // TODO: Audio player support in Lightbox or separate player
-        return {
-          type: "image", // Fallback for now until audio plugin is added
-          src: thumbnails[p.id] || "",
-          alt: "Audio file"
-        };
-      } else {
-        return { src: thumbnails[p.id] };
-      }
-    })
+    return photos
+      .filter(p => (p.media_type || 'image') !== 'audio')
+      .map(p => ({
+        src: thumbnails[p.id] || '',
+        alt: p.filename,
+      }));
   }, [photos, thumbnails]);
 
+  // Handle item click
+  const handleItemClick = (index: number) => {
+    const photo = photos[index];
+    const mediaType = photo?.media_type || 'image';
+
+    if (mediaType === 'audio') {
+      // Open audio player
+      setAudioPlayer({ id: photo.id, filename: photo.filename });
+    } else {
+      // Open lightbox - find index in filtered slides
+      const filteredPhotos = photos.filter(p => (p.media_type || 'image') !== 'audio');
+      const lightboxIdx = filteredPhotos.findIndex(p => p.id === photo.id);
+      setLightboxIndex(lightboxIdx);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -212,11 +157,7 @@ export default function Gallery() {
         </div>
       </header>
 
-      <main
-        ref={containerRef}
-        className="flex-1 p-0 touch-pan-y"
-        style={{ touchAction: 'pan-y' }}
-      >
+      <main className="flex-1 p-2">
         {photos.length === 0 ? (
           <div className="h-[50vh] flex flex-col items-center justify-center text-muted-foreground space-y-4">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
@@ -226,63 +167,34 @@ export default function Gallery() {
             <UploadTrigger />
           </div>
         ) : (
-          <PhotoAlbum
-            layout="masonry"
-            photos={albumPhotos}
-            columns={columns}
-            spacing={2}
-            onClick={({ index }) => setIndex(index)}
-            render={{
-              image: (props) => {
-                // Fix TS error: context is not on RenderImageProps type definition by default
-                const { src, width, height, style, context, ...rest } = props as any;
-                const mediaType = (context?.photo as any)?.mediaType;
-
-                if (!src && mediaType !== 'audio') {
-                  return (
-                    <div
-                      style={{ ...style, width: "100%", aspectRatio: `${width}/${height}` }}
-                      className="bg-muted animate-pulse"
-                    />
-                  );
-                }
-
-                if (mediaType === 'audio') {
-                  return (
-                    <div
-                      style={{ ...style }}
-                      className="bg-muted/30 border border-border flex items-center justify-center group cursor-pointer hover:bg-muted/50 transition-colors"
-                      {...rest}
-                    >
-                      <div className="text-center p-4">
-                        <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
-                        </div>
-                        <span className="text-xs font-medium text-muted-foreground truncate max-w-[100px] block">
-                          {(context?.photo as any)?.alt}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                }
-
-                return <img src={src} style={style} {...rest} className="transition-opacity duration-300 hover:brightness-110 cursor-pointer" />;
-              }
-            }}
+          <MasonryGrid
+            items={mediaItems}
+            columns={4}
+            spacing={4}
+            onItemClick={handleItemClick}
           />
         )}
       </main>
 
+      {/* Lightbox for images/videos */}
       <Lightbox
-        open={index >= 0}
-        index={index}
-        close={() => setIndex(-1)}
-        slides={slides as any[]}
-        plugins={[Video, Zoom]}
+        open={lightboxIndex >= 0}
+        index={lightboxIndex}
+        close={() => setLightboxIndex(-1)}
+        slides={slides}
+        plugins={[Zoom]}
+      />
+
+      {/* Audio Player Modal */}
+      <AudioPlayer
+        isOpen={!!audioPlayer}
+        onClose={() => setAudioPlayer(null)}
+        audioId={audioPlayer?.id || ''}
+        filename={audioPlayer?.filename || ''}
       />
 
       {/* Upload Panel - Fixed at Bottom Center */}
-      <UploadPanel />
+      <MultipleFileUploader />
     </div>
   );
 }

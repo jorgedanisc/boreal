@@ -14,10 +14,18 @@ pub fn init_db(path: &Path) -> Result<Connection> {
             size_bytes INTEGER,
             s3_key TEXT NOT NULL,
             thumbnail_key TEXT,
-            tier TEXT NOT NULL
+            tier TEXT NOT NULL,
+            media_type TEXT NOT NULL DEFAULT 'image'
         )",
         [],
     )?;
+
+    // Migration: Add media_type column if it doesn't exist (for existing databases)
+    conn.execute(
+        "ALTER TABLE photos ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
+        [],
+    )
+    .ok(); // Ignore error if column already exists
 
     Ok(conn)
 }

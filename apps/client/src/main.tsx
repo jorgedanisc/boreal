@@ -57,8 +57,26 @@ async function initDeepLinks() {
   }
 }
 
+// Initialize menu listeners
+async function initMenuListeners() {
+  const { listen } = await import("@tauri-apps/api/event");
+  const { openCacheFolder } = await import("./lib/vault");
+
+  // Listen for Developer > Open Cache Folder menu item
+  listen("menu:open_cache_folder", async () => {
+    try {
+      await openCacheFolder();
+    } catch (e) {
+      console.error("Failed to open cache folder:", e);
+    }
+  });
+}
+
 // Start deep link handling
-initDeepLinks()
+initDeepLinks();
+
+// Start menu listeners
+initMenuListeners();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

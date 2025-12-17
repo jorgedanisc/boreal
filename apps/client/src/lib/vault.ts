@@ -41,6 +41,12 @@ export async function exportVault(id: string): Promise<string> {
 export async function loadVault(id: string): Promise<void> {
   try {
     await invoke('load_vault', { id });
+    // Trigger progressive cache sync in the background (non-blocking)
+    syncThumbnailCache().then((count) => {
+      if (count > 0) {
+        console.log(`[Cache Sync] Fetched ${count} missing thumbnails`);
+      }
+    });
   } catch (e) {
     throw new Error(String(e));
   }
@@ -91,6 +97,7 @@ export interface Photo {
   width: number;
   height: number;
   s3_key: string;
+  media_type: 'image' | 'video' | 'audio';
 }
 
 export async function getPhotos(): Promise<Photo[]> {
@@ -112,6 +119,45 @@ export async function getThumbnail(id: string): Promise<string> {
 export async function uploadPhoto(path: string): Promise<void> {
   try {
     await invoke('upload_photo', { path });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Sync thumbnail cache - checks manifest against local cache and fetches missing thumbnails.
+ * Call this after vault load to progressively cache thumbnails for offline access.
+ * @returns Number of thumbnails that were fetched and cached
+ */
+export async function syncThumbnailCache(): Promise<number> {
+  try {
+    return await invoke('sync_thumbnail_cache');
+  } catch (e) {
+    console.error('Failed to sync thumbnail cache:', e);
+    return 0; // Don't throw, this is non-critical
+  }
+}
+
+/**
+ * Open the cache folder for the current vault in the system file explorer.
+ */
+export async function openCacheFolder(): Promise<void> {
+  try {
+    await invoke('open_cache_folder');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Get audio file for playback. Fetches from S3, decrypts, and returns base64.
+ * This is called on-demand when user clicks play (cost-efficient).
+ * @param id The audio file ID
+ * @returns Base64 encoded audio data
+ */
+export async function getAudio(id: string): Promise<string> {
+  try {
+    return await invoke('get_audio', { id });
   } catch (e) {
     throw new Error(String(e));
   }

@@ -26,7 +26,7 @@ struct AppState {
 }
 
 struct CacheState {
-    thumbnail_cache: Mutex<Option<ThumbnailCache>>,
+    thumbnail_cache: Arc<Mutex<Option<ThumbnailCache>>>,
 }
 
 struct UploadManagerState {
@@ -43,7 +43,12 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
 }
 
 #[tauri::command]
-async fn load_vault(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn load_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
+    id: String,
+) -> Result<(), String> {
     // 1. Get config from Stronghold
     let config = store::load_vault(&app, &id)?;
 
@@ -66,7 +71,11 @@ async fn load_vault(app: AppHandle, state: State<'_, AppState>, id: String) -> R
     let db_path = vault_dir.join("manifest.db");
     let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
 
-    // 5. Update State
+    // 5. Initialize ThumbnailCache for this vault
+    let thumbnail_cache = ThumbnailCache::new(&vault_dir).map_err(|e| e.to_string())?;
+    *cache_state.thumbnail_cache.lock().await = Some(thumbnail_cache);
+
+    // 6. Update State
     *state.storage.lock().await = Some(storage);
     *state.db.lock().await = Some(conn);
     *state.config.lock().await = Some(config.clone());
@@ -78,15 +87,19 @@ async fn load_vault(app: AppHandle, state: State<'_, AppState>, id: String) -> R
 async fn import_vault(
     app: AppHandle,
     state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
     vault_code: String,
 ) -> Result<(), String> {
+    // Parse JSON payload
     let mut config: VaultConfig =
         serde_json::from_str(&vault_code).map_err(|e| format!("Invalid vault code: {}", e))?;
 
-    // If imported config lacks ID/Name (legacy format?), generate them.
+    // Ensure config has an ID; generate one if missing (legacy Vault Files may not have IDs)
     if config.id.is_empty() {
         config.id = uuid::Uuid::new_v4().to_string();
     }
+
+    // Assign default name if missing
     if config.name.is_empty() {
         config.name = "Imported Vault".to_string();
     }
@@ -95,13 +108,14 @@ async fn import_vault(
     store::save_vault(&app, &config)?;
 
     // Activate
-    load_vault(app, state, config.id).await
+    load_vault(app, state, cache_state, config.id).await
 }
 
 #[tauri::command]
 async fn bootstrap_vault(
     app: AppHandle,
     state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
     vault_code: String,
 ) -> Result<(), String> {
     use crate::vault::BootstrapConfig;
@@ -140,7 +154,7 @@ async fn bootstrap_vault(
     store::save_vault(&app, &config)?;
 
     // 6. Activate
-    load_vault(app, state, id).await
+    load_vault(app, state, cache_state, id).await
 }
 
 #[tauri::command]
@@ -226,6 +240,7 @@ struct Photo {
     filename: String,
     created_at: String,
     tier: String,
+    media_type: String,
 }
 
 #[tauri::command]
@@ -234,7 +249,7 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
     let conn = db_guard.as_ref().ok_or("DB not initialized")?;
 
     let mut stmt = conn
-        .prepare("SELECT id, filename, created_at, tier FROM photos ORDER BY created_at DESC")
+        .prepare("SELECT id, filename, created_at, tier, media_type FROM photos ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
 
     let photos = stmt
@@ -244,6 +259,9 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
                 filename: row.get(1)?,
                 created_at: row.get(2)?,
                 tier: row.get(3)?,
+                media_type: row
+                    .get::<_, Option<String>>(4)?
+                    .unwrap_or_else(|| "image".to_string()),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -304,6 +322,142 @@ async fn get_thumbnail(
 
     // 5. Return Base64
     Ok(BASE64.encode(&dec_bytes))
+}
+
+/// Get audio file for playback. Fetches from S3, decrypts, and returns base64.
+/// This is called on-demand when user clicks play (cost-efficient).
+#[tauri::command]
+async fn get_audio(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let config_guard = state.config.lock().await;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+
+    // Audio files are stored as opus in audio/ prefix
+    let audio_key = format!("audio/{}.opus", id);
+    let enc_bytes = storage
+        .download_file(&audio_key)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Decrypt
+    let vault_key = BASE64.decode(&config.vault_key).unwrap();
+    let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
+
+    let dec_bytes = crypto::decrypt(&enc_bytes, &key_arr).map_err(|e| e.to_string())?;
+
+    // Return Base64
+    Ok(BASE64.encode(&dec_bytes))
+}
+
+/// Sync thumbnail cache - checks manifest against local cache and fetches missing thumbnails
+/// This is called after vault load to progressively cache thumbnails from S3
+#[tauri::command]
+async fn sync_thumbnail_cache(
+    state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
+) -> Result<u32, String> {
+    // Get all photo IDs from the manifest (local DB) that have thumbnails
+    let photo_ids: Vec<String> = {
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, media_type, thumbnail_key FROM photos WHERE thumbnail_key IS NOT NULL AND thumbnail_key != ''")
+            .map_err(|e| e.to_string())?;
+
+        let ids = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let media_type: Option<String> = row.get(1)?;
+                Ok((id, media_type.unwrap_or_else(|| "image".to_string())))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            // Only sync thumbnails for images and videos (audio has no thumbnail)
+            .filter(|(_, mt)| mt != "audio")
+            .map(|(id, _)| id)
+            .collect();
+
+        ids
+    };
+
+    // Check which thumbnails are missing from cache
+    let missing_ids: Vec<String> = {
+        let cache_guard = cache_state.thumbnail_cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            photo_ids
+                .iter()
+                .filter(|id| !cache.contains(id))
+                .cloned()
+                .collect()
+        } else {
+            // No cache initialized, all are "missing"
+            photo_ids
+        }
+    };
+
+    if missing_ids.is_empty() {
+        return Ok(0);
+    }
+
+    eprintln!(
+        "[Cache Sync] Found {} thumbnails missing from cache, fetching...",
+        missing_ids.len()
+    );
+
+    // Get storage and config for downloading
+    let (storage, vault_key) = {
+        let storage_guard = state.storage.lock().await;
+        let config_guard = state.config.lock().await;
+        let storage = storage_guard
+            .as_ref()
+            .ok_or("Storage not initialized")?
+            .clone();
+        let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+        let vault_key = BASE64
+            .decode(&config.vault_key)
+            .map_err(|e| format!("Invalid vault key: {}", e))?;
+        (storage, vault_key)
+    };
+
+    let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
+
+    // Fetch missing thumbnails and cache them
+    let mut fetched_count = 0u32;
+    for id in &missing_ids {
+        let thumbnail_key = format!("thumbnails/{}.webp", id);
+
+        match storage.download_file(&thumbnail_key).await {
+            Ok(enc_bytes) => {
+                match crypto::decrypt(&enc_bytes, &key_arr) {
+                    Ok(dec_bytes) => {
+                        // Cache the decrypted thumbnail
+                        let cache_guard = cache_state.thumbnail_cache.lock().await;
+                        if let Some(cache) = cache_guard.as_ref() {
+                            if cache.put(id, &dec_bytes).is_ok() {
+                                fetched_count += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Cache Sync] Failed to decrypt thumbnail {}: {}", id, e);
+                    }
+                }
+            }
+            Err(e) => {
+                // Thumbnail may not exist (audio files, or upload errors)
+                eprintln!("[Cache Sync] Failed to download thumbnail {}: {}", id, e);
+            }
+        }
+    }
+
+    eprintln!(
+        "[Cache Sync] Fetched and cached {} thumbnails",
+        fetched_count
+    );
+    Ok(fetched_count)
 }
 
 #[tauri::command]
@@ -418,16 +572,34 @@ async fn add_files_to_queue(
         .ok_or("Upload manager not initialized")?;
 
     let paths: Vec<PathBuf> = payload.paths.iter().map(PathBuf::from).collect();
-
-    // First, filter out unsupported files and create items
     let mut valid_paths = Vec::new();
+
+    // Use walkdir to recursively find files
     for path in paths {
-        if file_filter::is_supported_media(&path) {
-            valid_paths.push(path);
+        if path.is_dir() {
+            // It's a directory, walk it
+            // Follow symlinks? Usually confusing for uploads, default to false (which is walkdir default)
+            for entry in walkdir::WalkDir::new(&path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let entry_path = entry.path();
+                if entry_path.is_file() && file_filter::is_supported_media(entry_path) {
+                    valid_paths.push(entry_path.to_path_buf());
+                }
+            }
+        } else {
+            // It's a file
+            if file_filter::is_supported_media(&path) {
+                valid_paths.push(path);
+            }
         }
     }
 
-    // Create temporary items to check if we should auto-disable fresh upload
+    // Optimization: Check for duplicates against existing DB/Cache early?
+    // For now, let the manager handle logic.
+
+    // Create proposed items to check fresh upload limits
     let temp_items: Vec<UploadItem> = valid_paths
         .iter()
         .filter_map(|p| UploadItem::new(p.clone(), payload.fresh_upload).ok())
@@ -465,12 +637,23 @@ async fn get_upload_queue_status(
     Ok(manager.get_state().await)
 }
 
+#[derive(serde::Deserialize)]
+struct StartUploadPayload {
+    fresh_upload: bool,
+}
+
 #[tauri::command]
-async fn start_upload(upload_state: State<'_, UploadManagerState>) -> Result<(), String> {
+async fn start_upload(
+    upload_state: State<'_, UploadManagerState>,
+    payload: StartUploadPayload,
+) -> Result<(), String> {
     let manager_guard = upload_state.manager.lock().await;
     let manager = manager_guard
         .as_ref()
         .ok_or("Upload manager not initialized")?;
+
+    // Update all pending items with the current fresh_upload state
+    manager.update_fresh_upload_flag(payload.fresh_upload).await;
 
     manager.start_processing().await.map_err(|e| e.to_string())
 }
@@ -543,24 +726,102 @@ async fn retry_upload(
 }
 
 #[tauri::command]
+async fn remove_upload_item(
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+) -> Result<(), String> {
+    let manager_guard = upload_state.manager.lock().await;
+    let manager = manager_guard
+        .as_ref()
+        .ok_or("Upload manager not initialized")?;
+
+    // If it's active, we might want to cancel it first,
+    // but the manager.remove_item handles the map removal.
+    // For robust active cancellation + removal, the frontend should probably call cancel then remove,
+    // or we handle it inside manager.remove_item.
+    // For the specific bug (removing Pending items), this is sufficient.
+    manager.cancel(&id).await; // Best effort cancel
+    manager.remove_item(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn initialize_upload_manager(
     app: AppHandle,
     state: State<'_, AppState>,
     upload_state: State<'_, UploadManagerState>,
+    cache_state: State<'_, CacheState>,
 ) -> Result<(), String> {
     let (manager, _cancel_rx) = UploadManager::new(
         app,
         state.storage.clone(),
         state.config.clone(),
         state.db.clone(),
+        cache_state.thumbnail_cache.clone(), // Correctly accessing from CacheState
     );
     *upload_state.manager.lock().await = Some(manager);
     Ok(())
 }
 
+/// Open the cache folder for the current vault in the system file explorer
+#[tauri::command]
+async fn open_cache_folder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let config_guard = state.config.lock().await;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let cache_dir = app_dir
+        .join("vaults")
+        .join(&config.id)
+        .join("cache")
+        .join("thumbnails");
+
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    }
+
+    app.opener()
+        .open_path(cache_dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use tauri::menu::{Menu, MenuItem, Submenu};
+    use tauri::Emitter;
+
     tauri::Builder::default()
+        .setup(|app| {
+            // Create Developer menu with "Open Cache Folder" option
+            let developer_menu = Submenu::with_items(
+                app,
+                "Developer",
+                true,
+                &[&MenuItem::with_id(
+                    app,
+                    "open_cache_folder",
+                    "Open Cache Folder",
+                    true,
+                    None::<&str>,
+                )?],
+            )?;
+
+            // Create the menu bar
+            let menu = Menu::with_items(app, &[&developer_menu])?;
+            app.set_menu(menu)?;
+
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "open_cache_folder" {
+                // Emit event to frontend to handle
+                app.emit("menu:open_cache_folder", ()).ok();
+            }
+        })
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -576,7 +837,7 @@ pub fn run() {
             manager: Mutex::new(None),
         })
         .manage(CacheState {
-            thumbnail_cache: Mutex::new(None),
+            thumbnail_cache: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             import_vault,
@@ -584,6 +845,7 @@ pub fn run() {
             upload_photo,
             get_photos,
             get_thumbnail,
+            sync_thumbnail_cache,
             get_vaults,
             load_vault,
             export_vault,
@@ -599,7 +861,10 @@ pub fn run() {
             pause_upload,
             resume_upload,
             retry_upload,
-            initialize_upload_manager
+            remove_upload_item,
+            initialize_upload_manager,
+            open_cache_folder,
+            get_audio
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

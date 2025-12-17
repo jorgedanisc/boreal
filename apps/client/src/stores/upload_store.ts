@@ -17,6 +17,7 @@ export type UploadStatus =
   | 'Completed'
   | { Failed: { error: string } }
   | 'Cancelled'
+  | 'Failed'
   | 'Paused';
 
 export interface UploadFile {
@@ -57,7 +58,7 @@ interface UploadStore {
 
   // Actions
   addFiles: (paths: string[]) => Promise<{ autoDisabled: boolean }>;
-  removeFile: (id: string) => void;
+  removeFile: (id: string) => Promise<void>;
   cancelFile: (id: string) => Promise<void>;
   pauseFile: (id: string) => Promise<void>;
   resumeFile: (id: string) => Promise<void>;
@@ -217,10 +218,16 @@ export const useUploadStore = create<UploadStore>()(
       },
 
       // Remove a file from the queue (frontend only, for UX)
-      removeFile: (id: string) => {
-        set((state) => ({
-          files: state.files.filter((f) => f.id !== id),
-        }));
+      removeFile: async (id: string) => {
+        try {
+          await invoke('remove_upload_item', { id });
+          set((state) => ({
+            files: state.files.filter((f) => f.id !== id),
+          }));
+        } catch (error) {
+          console.error('Failed to remove file:', error);
+          // Optimistic update fallback? Or just error.
+        }
       },
 
       // Cancel a file upload
@@ -313,7 +320,12 @@ export const useUploadStore = create<UploadStore>()(
       startUpload: async () => {
         set({ isProcessing: true });
         try {
-          await invoke('start_upload');
+          // Pass the current freshUploadEnabled state to apply to all pending items
+          await invoke('start_upload', {
+            payload: {
+              fresh_upload: get().freshUploadEnabled,
+            },
+          });
         } catch (error) {
           console.error('Failed to start upload:', error);
           set({ isProcessing: false });

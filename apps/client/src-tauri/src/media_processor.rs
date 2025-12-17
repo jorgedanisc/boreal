@@ -107,7 +107,7 @@ pub fn process_image(path: &Path) -> Result<ProcessedMedia> {
     })
 }
 
-/// Process a video file: create H.265 MP4, static thumbnail, and animated preview
+/// Process a video file: create H.265 MP4 and animated WebP thumbnail (no static)
 pub async fn process_video(
     app: &tauri::AppHandle,
     path: &Path,
@@ -126,17 +126,8 @@ pub async fn process_video(
         let tb = video_stream.time_base();
         let dur = video_stream.duration() as f64 * f64::from(tb);
         let params = video_stream.parameters();
-        // Use a trusted source for dimensions (e.g. decoder context later) or parameters
-        // Note: parameters() gives us resolution.
-        // But better to get it from decoder context to account for sar/par?
-        // For simplicity, let's trust params temporarily or extract from decoder.
-        // Actually, we create a context_decoder below, let's use that.
-
         (index, tb, dur, params)
     };
-
-    // Calculate thumbnail timestamp (10% into video)
-    let thumbnail_timestamp = duration * 0.1;
 
     // Calculate preview frame timestamps (middle 90%, skip first/last 5%)
     let preview_start = duration * 0.05;
@@ -148,67 +139,58 @@ pub async fn process_video(
     let width = decoder.width();
     let height = decoder.height();
 
-    let mut thumbnail_frame: Option<frame::Video> = None;
     let mut preview_frames: Vec<frame::Video> = Vec::with_capacity(PREVIEW_FRAME_COUNT);
 
-    // Seek to thumbnail position and extract frames
-    ictx.seek((thumbnail_timestamp * 1_000_000.0) as i64, ..)?;
+    // Seek to start of preview section
+    ictx.seek((preview_start * 1_000_000.0) as i64, ..)?;
 
     for (stream, packet) in ictx.packets() {
         if stream.index() == video_stream_index {
             decoder.send_packet(&packet)?;
             let mut decoded = frame::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                if thumbnail_frame.is_none() {
-                    thumbnail_frame = Some(decoded.clone());
-                }
-
-                // Collect preview frames
+                // Collect preview frames for the animated thumbnail
                 let frame_ts = decoded.timestamp().unwrap_or(0) as f64 * f64::from(time_base);
 
-                if frame_ts >= preview_start && preview_frames.len() < PREVIEW_FRAME_COUNT {
+                // Check if we have enough frames
+                if preview_frames.len() >= PREVIEW_FRAME_COUNT {
+                    break;
+                }
+
+                // Check if likely duplicate or too close (simple interval check)
+                if frame_ts >= preview_start {
                     let expected_ts =
                         preview_start + (preview_frames.len() as f64 * preview_interval);
+
+                    // Allow some tolerance or just take the next available frame after expected timestamp
                     if frame_ts >= expected_ts {
                         preview_frames.push(decoded.clone());
                     }
                 }
-
-                if preview_frames.len() >= PREVIEW_FRAME_COUNT && thumbnail_frame.is_some() {
-                    break;
-                }
             }
         }
 
-        if preview_frames.len() >= PREVIEW_FRAME_COUNT && thumbnail_frame.is_some() {
+        if preview_frames.len() >= PREVIEW_FRAME_COUNT {
             break;
         }
     }
 
-    // Encode thumbnail as static WebP
-    let thumbnail = if let Some(ref frame) = thumbnail_frame {
-        let (w, h) = calculate_thumbnail_dimensions(frame.width(), frame.height(), 800);
-        let resized = resize_frame(frame, w, h)?;
-        Some(encode_frame_to_webp(&resized, 80)?)
-    } else {
-        None
-    };
-
-    // Encode animated preview as WebP
-    let preview = if !preview_frames.is_empty() {
+    // Encode animated preview as WebP and use it as the THUMBNAIL
+    // The architecture strictly defines that video thumbnails are animated WebPs.
+    let thumbnail = if !preview_frames.is_empty() {
         Some(encode_animated_webp(&preview_frames, 480)?)
     } else {
         None
     };
 
-    // Transcode video to H.265 MP4
+    // Transcode video to H.265 MP4 (Original)
     let original = transcode_video_h265(app, path, output_path).await?;
 
     Ok(ProcessedMedia {
         original,
         original_extension: "mp4".to_string(),
-        thumbnail,
-        preview,
+        thumbnail,     // This contains the animated WebP
+        preview: None, // Deprecated/Unused in favor of using thumbnail for everything
         width,
         height,
     })
@@ -314,22 +296,73 @@ fn encode_frame_to_webp(frame: &frame::Video, _quality: i32) -> Result<Vec<u8>> 
     Ok(output)
 }
 
-/// Encode multiple frames as animated WebP
+/// Encode multiple frames as animated WebP using webp-animation crate
 fn encode_animated_webp(frames: &[frame::Video], max_width: u32) -> Result<Vec<u8>> {
-    // For animated WebP, we need to use a proper WebP animation encoder
-    // This is a placeholder that creates a simple strip of frames
-    // In production, use libwebp-sys or similar for proper animation
+    use webp_animation::prelude::*;
 
     if frames.is_empty() {
         return Err(anyhow::anyhow!("No frames to encode"));
     }
 
-    // For now, just return the first frame as static WebP
-    // TODO: Implement proper animated WebP encoding with libwebp
+    // Get dimensions from first frame
     let first = &frames[0];
-    let (w, h) = calculate_thumbnail_dimensions(first.width(), first.height(), max_width);
-    let resized = resize_frame(first, w, h)?;
-    encode_frame_to_webp(&resized, 75)
+    let (width, height) = calculate_thumbnail_dimensions(first.width(), first.height(), max_width);
+
+    // Create encoder
+    let mut encoder = Encoder::new((width, height)).context("Failed to create WebP encoder")?;
+
+    // Frame duration in milliseconds (~300ms per frame = ~3 second loop for 10 frames)
+    let frame_duration_ms = 300;
+    let mut timestamp_ms = 0i32;
+
+    for frame in frames {
+        // Resize frame to thumbnail dimensions
+        let resized = resize_frame(frame, width, height)?;
+
+        // Convert to RGBA (webp-animation expects RGBA)
+        let rgba_frame = if resized.format() != ffmpeg::format::Pixel::RGBA {
+            let mut scaler = ScalingContext::get(
+                resized.format(),
+                resized.width(),
+                resized.height(),
+                ffmpeg::format::Pixel::RGBA,
+                width,
+                height,
+                ScalingFlags::BILINEAR,
+            )?;
+            let mut scaled = frame::Video::empty();
+            scaler.run(&resized, &mut scaled)?;
+            scaled
+        } else {
+            resized
+        };
+
+        // Extract RGBA data
+        let data = rgba_frame.data(0);
+        let stride = rgba_frame.stride(0);
+
+        // Copy row by row to handle stride
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            let row_start = (y as usize) * stride;
+            let row_end = row_start + (width * 4) as usize;
+            pixels.extend_from_slice(&data[row_start..row_end]);
+        }
+
+        // Add frame to animation
+        encoder
+            .add_frame(&pixels, timestamp_ms)
+            .context("Failed to add frame to animation")?;
+
+        timestamp_ms += frame_duration_ms;
+    }
+
+    // Finalize and get bytes
+    let webp_data = encoder
+        .finalize(timestamp_ms)
+        .context("Failed to finalize WebP animation")?;
+
+    Ok(webp_data.to_vec())
 }
 
 /// Transcode video to H.265 MP4 using FFmpeg CLI subprocess (Tauri Sidecar)
@@ -348,9 +381,9 @@ async fn transcode_video_h265(
         "-c:v".to_string(),
         "libx265".to_string(),
         "-crf".to_string(),
-        "28".to_string(),
+        "18".to_string(),
         "-preset".to_string(),
-        "fast".to_string(),
+        "slow".to_string(),
         "-tag:v".to_string(),
         "hvc1".to_string(),
         "-c:a".to_string(),

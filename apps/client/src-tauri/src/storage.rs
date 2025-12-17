@@ -72,10 +72,11 @@ impl Storage {
     ) -> Result<()> {
         let tag_value = if fresh_upload { "true" } else { "false" };
         let tagging = format!("fresh={}", tag_value);
-        
+
         // Use multipart upload for large files
         if body.len() > MULTIPART_THRESHOLD {
-            self.upload_multipart_with_tag(key, body, &tagging, None).await
+            self.upload_multipart_with_tag(key, body, &tagging, None)
+                .await
         } else {
             self.client
                 .put_object()
@@ -90,7 +91,6 @@ impl Storage {
         }
     }
 
-    /// Upload a file with progress callback (for UI progress tracking)
     pub async fn upload_file_with_progress(
         &self,
         key: &str,
@@ -100,27 +100,12 @@ impl Storage {
     ) -> Result<()> {
         let tag_value = if fresh_upload { "true" } else { "false" };
         let tagging = format!("fresh={}", tag_value);
-        let total_size = body.len() as u64;
 
-        if body.len() > MULTIPART_THRESHOLD {
-            self.upload_multipart_with_tag(key, body, &tagging, progress_tx).await
-        } else {
-            // For small files, just report complete after upload
-            self.client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(key)
-                .body(ByteStream::from(body))
-                .tagging(&tagging)
-                .send()
-                .await
-                .context("Failed to upload file")?;
-            
-            if let Some(tx) = progress_tx {
-                tx.send((total_size, total_size)).await.ok();
-            }
-            Ok(())
-        }
+        // Force multipart upload even for small files to reuse the progress tracking logic
+        // The inefficiency is negligible for USER UX benefit of seeing progress
+        // S3 allows multipart uploads for any size (minimum 5MB is for PARTS, but if there is only 1 part, it can be small)
+        self.upload_multipart_with_tag(key, body, &tagging, progress_tx)
+            .await
     }
 
     /// Multipart upload for large files with progress tracking
@@ -132,7 +117,7 @@ impl Storage {
         progress_tx: Option<mpsc::Sender<(u64, u64)>>,
     ) -> Result<()> {
         let total_size = body.len() as u64;
-        
+
         // Start multipart upload
         let create_response = self
             .client
@@ -174,7 +159,7 @@ impl Storage {
                             .part_number(part_number)
                             .build(),
                     );
-                    
+
                     uploaded_bytes += chunk.len() as u64;
                     if let Some(ref tx) = progress_tx {
                         tx.send((uploaded_bytes, total_size)).await.ok();
@@ -249,4 +234,3 @@ impl Storage {
         Ok(())
     }
 }
-

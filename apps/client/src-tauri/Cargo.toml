@@ -49,4 +49,6 @@ image = { version = "0.25.9", default-features = false, features = ["jpeg", "png
 infer = "0.16"
 ffmpeg-next = { version = "7", features = ["build"] }
 tauri-plugin-shell = "2.3.3"
+webp-animation = "0.9"
+walkdir = "2.5.0"
 
