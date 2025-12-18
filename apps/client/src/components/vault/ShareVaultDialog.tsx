@@ -8,7 +8,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { createExportQr, exportVault, authenticateBiometrics } from "@/lib/vault";
-import { IconCheck, IconCopy, IconPrinter, IconQrcode, IconWifi } from "@tabler/icons-react";
+import { IconCheck, IconCopy, IconPrinter, IconQrcode, IconDevices } from "@tabler/icons-react";
 import { useState } from "react";
 import QRCode from "react-qr-code";
 import { RecoveryKit } from "./RecoveryKit";
@@ -107,87 +107,89 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
           )}
         </DialogTrigger>
 
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Share Vault</DialogTitle>
-            <DialogDescription>
-              Use the QR code or link to transfer this vault to another device.
+            <DialogTitle className="text-base font-medium">Share Vault</DialogTitle>
+            <DialogDescription className="text-xs">
+              Transfer this vault to another device
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col items-center justify-center p-6 space-y-6">
+          <div className="flex flex-col items-center py-4 space-y-5">
             {loading ? (
-              <div className="flex flex-col items-center gap-2">
-                <Spinner className="w-8 h-8 text-primary" />
-                <p className="text-sm text-muted-foreground">Generating secure credentials...</p>
+              <div className="flex flex-col items-center gap-2 py-8">
+                <Spinner className="w-6 h-6 text-primary" />
+                <p className="text-xs text-muted-foreground">Generating credentials...</p>
               </div>
             ) : exportData ? (
               <>
-                <div className="bg-white p-4 rounded-xl border shadow-sm relative group">
+                {/* QR Code */}
+                <div className="bg-white p-3 rounded-xl">
                   <QRCode
                     value={exportData.qr_url}
-                    size={200}
+                    size={160}
                     level="L"
                   />
-                  {/* Overlay for screenshot protection visual cue? No, Argon2 protects us. */}
                 </div>
 
-                {/* Constrain width to match QR Code (approx 200px + padding) */}
-                <div className="w-[240px] space-y-6">
-                  <div className="bg-muted/50 p-4 rounded-lg border text-center space-y-1">
-                    <p className="text-xs uppercase text-muted-foreground font-semibold tracking-wider">Pairing PIN</p>
-                    <p className="text-3xl font-mono font-bold tracking-[0.2em] text-foreground">
-                      {exportData.pin}
+                {/* PIN Display */}
+                <div className="text-center space-y-1">
+                  <p className="text-[10px] uppercase text-muted-foreground/60 tracking-wider">
+                    Pairing PIN
+                  </p>
+                  <p className="text-2xl font-mono font-bold tracking-[0.15em]">
+                    {exportData.pin}
+                  </p>
+                </div>
+
+                {/* Divider */}
+                <div className="relative flex items-center w-full max-w-[200px]">
+                  <div className="flex-1 border-t border-border/50" />
+                  <span className="px-2 text-[10px] text-muted-foreground/60 uppercase">Or</span>
+                  <div className="flex-1 border-t border-border/50" />
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-col gap-2 w-full max-w-[200px]">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2 h-9 text-xs"
+                    onClick={() => setShowNetworkShare(true)}
+                  >
+                    <IconDevices className="w-3.5 h-3.5" />
+                    Share Over Network
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-2 h-9 text-xs"
+                    onClick={handleCopy}
+                  >
+                    {copied ? <IconCheck className="w-3.5 h-3.5" /> : <IconCopy className="w-3.5 h-3.5" />}
+                    {copied ? "Copied" : "Copy Link"}
+                  </Button>
+
+                  <div className="pt-2 space-y-1.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full gap-2 h-8 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
+                      onClick={handlePrint}
+                      disabled={printing}
+                    >
+                      {printing ? <Spinner className="w-3.5 h-3.5" /> : <IconPrinter className="w-3.5 h-3.5" />}
+                      Print Recovery Kit
+                    </Button>
+                    <p className="text-[9px] text-center text-muted-foreground/50 leading-tight">
+                      Contains sensitive recovery data
                     </p>
-                  </div>
-
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-gray-200" />
-                    </div>
-                    <span className="relative z-10 bg-background px-2 text-xs text-muted-foreground uppercase font-medium">
-                      Or
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    <Button
-                      variant="outline"
-                      className="w-full gap-2"
-                      onClick={() => setShowNetworkShare(true)}
-                    >
-                      <IconWifi className="w-4 h-4" />
-                      Share Over Network
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      className="w-full gap-2"
-                      onClick={handleCopy}
-                    >
-                      {copied ? <IconCheck className="w-4 h-4" /> : <IconCopy className="w-4 h-4" />}
-                      {copied ? "Copied Link" : "Copy Secure Link"}
-                    </Button>
-
-                    <div className="space-y-2">
-                      <Button
-                        variant="secondary"
-                        className="w-full gap-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border-amber-200/50 dark:border-amber-800/50 border"
-                        onClick={handlePrint}
-                        disabled={printing}
-                      >
-                        {printing ? <Spinner className="w-4 h-4" /> : <IconPrinter className="w-4 h-4" />}
-                        Print Recovery Kit
-                      </Button>
-                      <p className="text-[10px] text-center text-muted-foreground/60 leading-tight px-1">
-                        Only download if absolutely necessary. Contains sensitive recovery data.
-                      </p>
-                    </div>
                   </div>
                 </div>
               </>
             ) : (
-              <p className="text-red-500">Failed to generate QR code</p>
+              <p className="text-xs text-destructive">Failed to generate QR code</p>
             )}
           </div>
         </DialogContent>

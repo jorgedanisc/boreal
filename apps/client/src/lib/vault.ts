@@ -26,6 +26,8 @@ export async function getVaults(): Promise<VaultPublic[]> {
 export async function renameVault(id: string, newName: string): Promise<void> {
   try {
     await invoke('rename_vault', { id, newName });
+    // Sync manifest to propagate rename to other devices
+    queueManifestSync();
   } catch (e) {
     throw new Error(String(e));
   }
@@ -197,3 +199,49 @@ export async function checkBiometrics(): Promise<boolean> {
 export async function authenticateBiometrics(reason: string): Promise<void> {
   return await invoke('authenticate_biometrics', { reason });
 }
+
+// Manifest Sync Functions
+
+/**
+ * Upload the local manifest to S3. Call this after data changes
+ * (memories created/updated, photos uploaded, vault renamed).
+ */
+export async function syncManifestUpload(): Promise<void> {
+  try {
+    await invoke('sync_manifest_upload');
+  } catch (e) {
+    console.error('Manifest upload failed:', e);
+    // Non-critical, don't throw - manifest will sync on next opportunity
+  }
+}
+
+/**
+ * Download and merge the manifest from S3 into local DB.
+ * This is called automatically on vault load, but can be triggered manually.
+ */
+export async function syncManifestDownload(): Promise<void> {
+  try {
+    await invoke('sync_manifest_download');
+  } catch (e) {
+    console.error('Manifest download failed:', e);
+    // Non-critical, don't throw
+  }
+}
+
+// Debounced manifest upload (5 seconds after last change)
+let manifestUploadTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Queue a manifest upload (debounced). Call this after any data change.
+ * Will upload the manifest 5 seconds after the last call.
+ */
+export function queueManifestSync(): void {
+  if (manifestUploadTimeout) {
+    clearTimeout(manifestUploadTimeout);
+  }
+  manifestUploadTimeout = setTimeout(() => {
+    syncManifestUpload();
+    manifestUploadTimeout = null;
+  }, 5000);
+}
+

@@ -1,21 +1,26 @@
 use serde::{Deserialize, Serialize};
 
+/// Vault credentials and encryption key stored in local JSON.
+/// Note: `name` and `visits` are stored in SQLite, not here.
 #[derive(Deserialize, Serialize, Clone, Default)]
 pub struct VaultConfig {
     #[serde(default)]
     pub id: String,
-    #[serde(default)]
-    pub name: String,
     pub access_key_id: String,
     pub secret_access_key: String,
     pub region: String,
     pub bucket: String,
     #[serde(default)]
     pub vault_key: String,
-    #[serde(default)]
-    pub visits: u32,
+    // Legacy fields - kept for migration but ignored after first load
+    #[serde(default, skip_serializing)]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub visits: Option<u32>,
 }
 
+/// Public vault info for UI display.
+/// `name` and `visits` come from SQLite, not the JSON config.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct VaultPublic {
     pub id: String,
@@ -27,7 +32,6 @@ pub struct VaultPublic {
 impl VaultConfig {
     pub fn new(
         id: String,
-        name: String,
         access_key_id: String,
         secret_access_key: String,
         region: String,
@@ -36,13 +40,13 @@ impl VaultConfig {
     ) -> Self {
         Self {
             id,
-            name,
             access_key_id,
             secret_access_key,
             region,
             bucket,
             vault_key,
-            visits: 0,
+            name: None,
+            visits: None,
         }
     }
 }
@@ -89,17 +93,10 @@ pub mod store {
         write_all(app, &vaults)
     }
 
-    pub fn get_vaults(app: &AppHandle) -> Result<Vec<VaultPublic>, String> {
+    /// Get list of vault IDs and buckets (name/visits come from SQLite)
+    pub fn get_vault_ids(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
         let vaults = read_all(app)?;
-        Ok(vaults
-            .into_iter()
-            .map(|v| VaultPublic {
-                id: v.id,
-                name: v.name,
-                bucket: v.bucket,
-                visits: v.visits,
-            })
-            .collect())
+        Ok(vaults.into_iter().map(|v| (v.id, v.bucket)).collect())
     }
 
     pub fn load_vault(app: &AppHandle, id: &str) -> Result<VaultConfig, String> {
@@ -108,6 +105,13 @@ pub mod store {
             .into_iter()
             .find(|v| v.id == id)
             .ok_or_else(|| "Vault not found".to_string())
+    }
+
+    /// Delete a vault from the JSON registry
+    pub fn delete_vault(app: &AppHandle, id: &str) -> Result<(), String> {
+        let mut vaults = read_all(app)?;
+        vaults.retain(|v| v.id != id);
+        write_all(app, &vaults)
     }
 }
 

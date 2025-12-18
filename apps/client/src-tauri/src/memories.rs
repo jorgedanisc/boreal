@@ -1,7 +1,6 @@
 use crate::AppState;
-use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::State;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Memory {

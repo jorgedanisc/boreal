@@ -1,0 +1,194 @@
+import { createFileRoute, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
+import { GalleryBottomNav } from '@/components/GalleryBottomNav';
+import { Button } from '@/components/ui/button';
+import { ChevronLeft, Plus, ShareIcon } from 'lucide-react';
+import { useState, useEffect, createContext, useContext } from 'react';
+import { MemoryEditor } from '@/components/memories/MemoryEditor';
+import { ShareVaultDialog } from '@/components/vault/ShareVaultDialog';
+import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
+import { UploadTrigger } from '@/components/upload/UploadTrigger';
+import { MultipleFileUploader } from '@/components/upload/MultipleFileUploader';
+import { getActiveVault, renameVault, VaultPublic } from '@/lib/vault';
+import { type } from '@tauri-apps/plugin-os';
+
+export const Route = createFileRoute('/gallery')({
+  component: GalleryLayout,
+});
+
+// Context for child routes to update header subtitle (e.g., date label)
+interface GalleryLayoutContextType {
+  setSubtitle: (subtitle: string) => void;
+  onMemorySaved: () => void;
+}
+
+const GalleryLayoutContext = createContext<GalleryLayoutContextType | null>(null);
+
+export function useGalleryLayout() {
+  const ctx = useContext(GalleryLayoutContext);
+  if (!ctx) throw new Error('useGalleryLayout must be used within GalleryLayout');
+  return ctx;
+}
+
+function GalleryLayout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const [isMemoryEditorOpen, setIsMemoryEditorOpen] = useState(false);
+  const [activeVault, setActiveVault] = useState<VaultPublic | null>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [subtitle, setSubtitle] = useState('Timeline');
+  const [_, setMemorySavedCounter] = useState(0);
+  const [renameOpen, setRenameOpen] = useState(false);
+
+  const triggerMemoryRefresh = () => {
+    setMemorySavedCounter(c => c + 1);
+    window.dispatchEvent(new CustomEvent('memory-saved'));
+  };
+
+  // Determine current view based on path
+  let currentView: 'gallery' | 'memories' | 'map' = 'gallery';
+  const isMemoriesListView = location.pathname === '/gallery/memories' || location.pathname === '/gallery/memories/';
+  const isMemoryDetailView = location.pathname.startsWith('/gallery/memories/') && location.pathname !== '/gallery/memories/';
+  const isMemoriesView = isMemoriesListView || isMemoryDetailView;
+  // const isGalleryView = location.pathname === '/gallery' || location.pathname === '/gallery/';
+
+  if (isMemoriesView) {
+    currentView = 'memories';
+  } else if (location.pathname.includes('/map')) {
+    currentView = 'map';
+  }
+
+  useEffect(() => {
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+
+    // Load vault info for header
+    getActiveVault().then(v => setActiveVault(v)).catch(() => { });
+  }, []);
+
+  // Reset subtitle when navigating between views
+  // Both Gallery and Memories pages will set their own date-based subtitle via context
+  useEffect(() => {
+    // Let child routes handle their own subtitles
+  }, [location.pathname]);
+
+  const openMemoryEditor = () => setIsMemoryEditorOpen(true);
+
+  // Detail pages (like /gallery/memories/:id) need their own header
+  const showSharedHeader = !isMemoryDetailView;
+  const showBottomNav = !isMemoryDetailView;
+
+  return (
+    <GalleryLayoutContext.Provider value={{ setSubtitle, onMemorySaved: triggerMemoryRefresh }}>
+      <div className="relative min-h-screen bg-background text-foreground flex flex-col h-screen overflow-hidden">
+        {/* Shared Header */}
+        {showSharedHeader && (
+          <header
+            className="fixed top-0 left-0 right-0 z-30 pointer-events-none"
+            style={{ paddingTop: isDesktop ? "32px" : "0px" }}
+          >
+            <div
+              className="absolute inset-0"
+              style={{
+                background: 'linear-gradient(to bottom, oklch(18.971% 0.00816 296.997) 0%, oklch(18.971% 0.00816 296.997 / 0.9) 50%, oklch(18.971% 0.00816 296.997 / 0) 100%)',
+              }}
+            />
+            <div className="relative flex items-start justify-between p-4 pointer-events-auto">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => navigate({ to: "/" })}
+                    className="shrink-0 -ml-2 h-8 w-8"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </Button>
+                  <button
+                    onClick={() => activeVault && setRenameOpen(true)}
+                    className="text-xl font-bold tracking-tight px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors text-left"
+                  >
+                    {activeVault?.name || "Photos"}
+                  </button>
+                </div>
+                <p className="text-sm font-medium text-muted-foreground/70 ml-10">
+                  {subtitle}
+                </p>
+              </div>
+
+              {/* Top Right: Actions */}
+              <div className="flex items-center gap-3">
+                {activeVault && (
+                  <ShareVaultDialog
+                    vaultId={activeVault.id}
+                    trigger={
+                      <Button variant="ghost" className="h-9 w-9 p-0 rounded-full bg-white/10 border-white/10 hover:bg-white/20 backdrop-blur-md">
+                        <ShareIcon className="w-5 h-5 text-foreground" />
+                      </Button>
+                    }
+                  />
+                )}
+
+                <UploadTrigger>
+                  <Button className="rounded-full px-5 font-semibold bg-secondary/60 text-secondary-foreground hover:bg-secondary/90 transition-colors backdrop-blur-2xl border border-white/10 shadow-2xl">
+                    Upload
+                  </Button>
+                </UploadTrigger>
+              </div>
+            </div>
+          </header>
+        )}
+
+        {/* Child Route Content */}
+        <Outlet />
+
+        {/* Bottom Navigation + FAB for Memories */}
+        {showBottomNav && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
+            {/* Nav is centered, plus button is positioned absolutely to the right */}
+            <div className="relative">
+              <GalleryBottomNav currentView={currentView} />
+
+              {isMemoriesListView && (
+                <Button
+                  onClick={openMemoryEditor}
+                  size="icon"
+                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-all"
+                >
+                  <Plus className="w-5 h-5" />
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Memory Editor Drawer */}
+        <MemoryEditor
+          open={isMemoryEditorOpen}
+          onOpenChange={setIsMemoryEditorOpen}
+          onSave={triggerMemoryRefresh}
+        />
+
+        {/* Rename Vault Dialog */}
+        {activeVault && (
+          <RenameVaultDialog
+            open={renameOpen}
+            onOpenChange={setRenameOpen}
+            vaultName={activeVault.name}
+            onConfirm={async (newName) => {
+              await renameVault(activeVault.id, newName);
+              setActiveVault(prev => prev ? { ...prev, name: newName } : null);
+            }}
+          />
+        )}
+
+        {/* Upload Drawer - available on all gallery routes */}
+        <div className="hidden">
+          <MultipleFileUploader />
+        </div>
+      </div>
+    </GalleryLayoutContext.Provider>
+  );
+}

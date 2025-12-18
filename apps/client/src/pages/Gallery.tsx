@@ -1,17 +1,13 @@
-import { Button } from '@/components/ui/button';
-import { MultipleFileUploader } from '@/components/upload/MultipleFileUploader';
 import { UploadTrigger } from '@/components/upload/UploadTrigger';
 import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { useUploadStore } from '@/stores/upload_store';
-import { useNavigate } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, Image as ImageIcon, ShareIcon } from 'lucide-react';
+import { Image as ImageIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
 import { getActiveVault, getPhotos, getThumbnail, Photo, renameVault, VaultPublic } from '../lib/vault';
+import { useGalleryLayout } from '@/routes/gallery';
 
 // Custom Gallery Components
-import { GalleryBottomNav } from '@/components/GalleryBottomNav';
 import { AudioPlayer } from '@/components/gallery/AudioPlayer';
 import { VirtualizedMasonryGrid, MediaItem, LayoutItem } from '@/components/gallery/MasonryGrid';
 
@@ -22,7 +18,7 @@ import "yet-another-react-lightbox/styles.css";
 import { type } from '@tauri-apps/plugin-os';
 
 export default function Gallery() {
-  const navigate = useNavigate();
+  const { setSubtitle } = useGalleryLayout();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [activeVault, setActiveVault] = useState<VaultPublic | null>(null);
@@ -45,9 +41,7 @@ export default function Gallery() {
 
   // Scroll & Layout State
   const [currentScrollY, setCurrentScrollY] = useState(0);
-  //   const [totalGridHeight, setTotalGridHeight] = useState(0);
   const [itemOffsets, setItemOffsets] = useState<number[]>([]);
-  const [activeDateLabel, setActiveDateLabel] = useState<string>('');
 
   useEffect(() => {
     const osType = type();
@@ -67,7 +61,7 @@ export default function Gallery() {
     try {
       const vault = await getActiveVault();
       if (!vault) {
-        navigate({ to: "/" });
+        // No vault loaded, could redirect but layout handles that
         return;
       }
       setActiveVault(vault);
@@ -133,7 +127,7 @@ export default function Gallery() {
   // Handle Scroll to update active date
   useEffect(() => {
     if (photos.length === 0) {
-      setActiveDateLabel('');
+      setSubtitle('Timeline');
       return;
     }
 
@@ -160,12 +154,12 @@ export default function Gallery() {
           month: 'short',
           year: 'numeric',
         });
-        setActiveDateLabel(formatted);
+        setSubtitle(formatted);
       } catch {
-        setActiveDateLabel('');
+        setSubtitle('Timeline');
       }
     }
-  }, [currentScrollY, photos, itemOffsets]);
+  }, [currentScrollY, photos, itemOffsets, setSubtitle]);
 
   // Handle Layout Computation from MasonryGrid
   const handleLayoutComputed = useCallback((layout: LayoutItem[]) => {
@@ -204,75 +198,11 @@ export default function Gallery() {
   };
 
   // Grid spacing constant for consistent padding
-  const GRID_SPACING = 2;
+  const GRID_SPACING = 5;
 
   return (
     <div className="text-foreground flex flex-col h-screen bg-background relative overflow-hidden">
-      {/* Header - gradient fade overlay */}
-      <header
-        className="fixed top-0 left-0 right-0 z-30 pointer-events-none"
-        style={{
-          paddingTop: isDesktop ? "32px" : "0px",
-        }}
-      >
-        {/* Gradient background for fade effect */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'linear-gradient(to bottom, oklch(18.971% 0.00816 296.997) 0%, oklch(18.971% 0.00816 296.997 / 0.9) 50%, oklch(18.971% 0.00816 296.997 / 0) 100%)',
-          }}
-        />
-        <div className="relative flex items-start justify-between p-4 pointer-events-auto">
-          {/* Top Left: Chevron + Title row, Date below */}
-          <div className="flex flex-col">
-            {/* Row with Chevron + Title */}
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => navigate({ to: "/" })}
-                className="shrink-0 -ml-2 h-8 w-8"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </Button>
-              <div
-                className="group flex items-center gap-2 cursor-pointer"
-                onClick={() => activeVault && setRenameOpen(true)}
-              >
-                <h1 className="text-xl font-bold tracking-tight">
-                  {activeVault?.name || "Photos"}
-                </h1>
-              </div>
-            </div>
-            {/* Date below the chevron */}
-            <p className="text-sm font-medium text-muted-foreground/70 ml-7">
-              {activeDateLabel || "Timeline"}
-            </p>
-          </div>
-
-          {/* Top Right: Actions */}
-          <div className="flex items-center gap-3">
-            {activeVault && (
-              <ShareVaultDialog
-                vaultId={activeVault.id}
-                trigger={
-                  <Button variant="ghost" className="h-9 w-9 p-0 rounded-full bg-white/10 border-white/10 hover:bg-white/20 backdrop-blur-md">
-                    <ShareIcon className="w-5 h-5 text-foreground" />
-                  </Button>
-                }
-              />
-            )}
-
-            <UploadTrigger>
-              <Button className="rounded-full px-5 font-semibold bg-secondary/60 text-secondary-foreground hover:bg-secondary/90 transition-colors backdrop-blur-2xl border border-white/10 shadow-2xl">
-                Upload
-              </Button>
-            </UploadTrigger>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content - grid fills entire screen, content scrolls under header */}
+      {/* Main Content - grid fills entire screen */}
       <main className="absolute inset-0">
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4">
@@ -296,10 +226,7 @@ export default function Gallery() {
         )}
       </main>
 
-      
-      <GalleryBottomNav currentView="gallery" />
 
-      {/* Global Components */}
       <Lightbox
         open={lightboxIndex >= 0}
         index={lightboxIndex}
@@ -314,11 +241,6 @@ export default function Gallery() {
         audioId={audioPlayer?.id || ''}
         filename={audioPlayer?.filename || ''}
       />
-
-      {/* Invisible Uploader for handling file drops/selection */}
-      <div className="hidden">
-        <MultipleFileUploader />
-      </div>
 
       <RenameVaultDialog
         open={renameOpen}

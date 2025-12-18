@@ -4,6 +4,7 @@ mod db;
 mod exif_extractor;
 mod file_filter;
 mod image_processing;
+mod manifest;
 mod media_processor;
 mod memories;
 mod pairing;
@@ -42,11 +43,45 @@ struct PairingManagerState {
 
 // Commands
 
-use crate::vault::{store, VaultPublic};
+use crate::vault::store;
+use crate::vault::VaultPublic;
 
+/// Get all vaults with name/visits from SQLite
 #[tauri::command]
 async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
-    let mut vaults = store::get_vaults(&app)?;
+    let vault_ids = store::get_vault_ids(&app)?;
+    let mut vaults = Vec::new();
+
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    for (id, bucket) in vault_ids {
+        let vault_dir = app_dir.join("vaults").join(&id);
+        let db_path = vault_dir.join("manifest.db");
+
+        let (name, visits) = if db_path.exists() {
+            // Read from SQLite
+            let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+            let name = db::get_metadata(&conn, "name")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_else(|| "Untitled Vault".to_string());
+            let visits: u32 = db::get_metadata(&conn, "visits")
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            (name, visits)
+        } else {
+            // New vault or migration needed - use defaults
+            ("Untitled Vault".to_string(), 0)
+        };
+
+        vaults.push(VaultPublic {
+            id,
+            name,
+            bucket,
+            visits,
+        });
+    }
+
     // Sort by visits descending
     vaults.sort_by(|a, b| b.visits.cmp(&a.visits));
     Ok(vaults)
@@ -59,12 +94,8 @@ async fn load_vault(
     cache_state: State<'_, CacheState>,
     id: String,
 ) -> Result<(), String> {
-    // 1. Get config from Stronghold
-    let mut config = store::load_vault(&app, &id)?;
-
-    // 1b. Increment visits and update both JSON and SQL
-    config.visits += 1;
-    store::save_vault(&app, &config)?;
+    // 1. Get config from JSON (credentials only)
+    let config = store::load_vault(&app, &id)?;
 
     // 2. Validate key
     let _ = BASE64
@@ -74,9 +105,8 @@ async fn load_vault(
     // 3. Setup Storage
     let storage = Storage::new(&config).await;
 
-    // 4. Setup DB (Scoped to vault ID to support multiple vaults!)
+    // 4. Setup DB (Scoped to vault ID)
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    // Create a subfolder for this vault to avoid conflict
     let vault_dir = app_dir.join("vaults").join(&config.id);
     if !vault_dir.exists() {
         std::fs::create_dir_all(&vault_dir).map_err(|e| e.to_string())?;
@@ -85,71 +115,83 @@ async fn load_vault(
     let db_path = vault_dir.join("manifest.db");
     let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
 
-    // 5. Initialize ThumbnailCache for this vault
+    // 5. Migration: Move name/visits from JSON to SQLite (one-time)
+    let needs_migration = db::get_metadata(&conn, "name")
+        .map_err(|e| e.to_string())?
+        .is_none();
+
+    if needs_migration {
+        // Read legacy values from JSON config
+        let legacy_name = config
+            .name
+            .clone()
+            .unwrap_or_else(|| "Untitled Vault".to_string());
+        let legacy_visits = config.visits.unwrap_or(0);
+
+        db::set_metadata(&conn, "name", &legacy_name)
+            .map_err(|e| format!("Migration failed (name): {}", e))?;
+        db::set_metadata(&conn, "visits", &legacy_visits.to_string())
+            .map_err(|e| format!("Migration failed (visits): {}", e))?;
+
+        eprintln!(
+            "[Migration] Moved name='{}' and visits={} to SQLite",
+            legacy_name, legacy_visits
+        );
+    }
+
+    // 6. Increment visits in SQLite
+    let current_visits: u32 = db::get_metadata(&conn, "visits")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    db::set_metadata(&conn, "visits", &(current_visits + 1).to_string())
+        .map_err(|e| format!("Failed to update visits: {}", e))?;
+
+    // 7. Initialize ThumbnailCache for this vault
     let thumbnail_cache = ThumbnailCache::new(&vault_dir).map_err(|e| e.to_string())?;
     *cache_state.thumbnail_cache.lock().await = Some(thumbnail_cache);
 
-    // 6. Update State
+    // 8. Update State
     *state.storage.lock().await = Some(storage);
     *state.db.lock().await = Some(conn);
-    *state.config.lock().await = Some(config.clone());
+    *state.config.lock().await = Some(config);
 
-    // 7. Update Metadata in SQL (for sync compatibility)
-    // We do this AFTER initializing state.db so we can reuse the connection logic if needed,
-    // but here we already have `conn` in scope.
-    // Re-acquire lock or just use the local `conn` if it wasn't moved?
-    // `conn` was moved into the Mutex above. Let's get it back from the lock.
-    {
-        let db_guard = state.db.lock().await;
-        if let Some(conn) = db_guard.as_ref() {
-            db::set_metadata(conn, "visits", &config.visits.to_string())
-                .map_err(|e| format!("Failed to update metadata visits: {}", e))?;
-            db::set_metadata(conn, "name", &config.name)
-                .map_err(|e| format!("Failed to update metadata name: {}", e))?;
+    // 9. Background: Download and merge manifest from S3
+    // (This is done async after returning to not block UI)
+    let storage_clone = state.storage.lock().await.clone();
+    let db_clone = state.db.clone();
+    let config_clone = state.config.lock().await.clone();
+
+    tokio::spawn(async move {
+        if let (Some(storage), Some(config)) = (storage_clone, config_clone) {
+            if let Err(e) = sync_manifest_download_internal(&storage, &db_clone, &config).await {
+                eprintln!("[Manifest Sync] Background download failed: {}", e);
+            }
         }
-    }
+    });
 
     Ok(())
 }
 
 #[tauri::command]
 async fn rename_vault(
-    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     new_name: String,
 ) -> Result<(), String> {
-    // 1. Update local JSON registry
-    let mut config = store::load_vault(&app, &id)?;
-    config.name = new_name.clone();
-    store::save_vault(&app, &config)?;
-
-    // 2. Update active state if this is the currently loaded vault
-    {
-        let mut config_guard = state.config.lock().await;
-        if let Some(current) = config_guard.as_mut() {
-            if current.id == id {
-                current.name = new_name.clone();
-                // Also update SQL metadata immediately
-                let db_guard = state.db.lock().await;
-                if let Some(conn) = db_guard.as_ref() {
-                    db::set_metadata(conn, "name", &new_name)
-                        .map_err(|e| format!("Failed to update metadata name: {}", e))?;
-                }
+    // Update SQLite metadata if vault is loaded
+    let config_guard = state.config.lock().await;
+    if let Some(current) = config_guard.as_ref() {
+        if current.id == id {
+            let db_guard = state.db.lock().await;
+            if let Some(conn) = db_guard.as_ref() {
+                db::set_metadata(conn, "name", &new_name)
+                    .map_err(|e| format!("Failed to update name: {}", e))?;
             }
         }
     }
-
-    // Note: If the vault is NOT loaded, we initiate a quick DB connection just to update the metadata?
-    // Or we just accept that metadata in SQL is updated on next load?
-    // User requirement "sync compatibility" implies SQL should be correct.
-    // However, if the vault isn't loaded, we can't easily access its DB without repeating `init_db` logic.
-    // For now, let's update SQL if loaded. If not loaded, `load_vault` (step 1b + 7) will update metadata on next open.
-    // Wait, `load_vault` step 7 pushes JSON state to SQL. So yes, updating JSON `rename_vault` is sufficient
-    // because `load_vault` will propagate it to SQL next time it's opened.
-    // BUT if we want "background sync" to work without opening, we might need to open DB here.
-    // Let's stick to: Update loaded state if active, otherwise next load handles it.
-
+    // Note: If vault is not loaded, the rename will happen on next load
+    // when the user explicitly opens the vault
     Ok(())
 }
 
@@ -169,16 +211,115 @@ async fn import_vault(
         config.id = uuid::Uuid::new_v4().to_string();
     }
 
-    // Assign default name if missing
-    if config.name.is_empty() {
-        config.name = "Imported Vault".to_string();
+    // Set default name for migration (will be written to SQLite on load)
+    if config.name.is_none() {
+        config.name = Some("Imported Vault".to_string());
     }
 
-    // Save to Stronghold
+    // Save to JSON store
     store::save_vault(&app, &config)?;
 
     // Activate
     load_vault(app, state, cache_state, config.id).await
+}
+
+/// Internal function to download and merge manifest from S3
+async fn sync_manifest_download_internal(
+    storage: &Storage,
+    db: &Arc<Mutex<Option<Connection>>>,
+    config: &VaultConfig,
+) -> Result<(), String> {
+    use crate::manifest;
+
+    // Try to download manifest.enc from S3
+    let enc_bytes = match storage.download_file(manifest::MANIFEST_S3_KEY).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            // No manifest exists yet - this is fine for new vaults
+            eprintln!("[Manifest Sync] No manifest found on S3 ({})", e);
+            return Ok(());
+        }
+    };
+
+    // Decrypt
+    let vault_key = BASE64
+        .decode(&config.vault_key)
+        .map_err(|e| format!("Invalid vault key: {}", e))?;
+    let key_arr: [u8; 32] = vault_key
+        .try_into()
+        .map_err(|_| "Invalid key length".to_string())?;
+
+    let remote_data = manifest::decrypt_manifest(&enc_bytes, &key_arr)
+        .map_err(|e| format!("Failed to decrypt manifest: {}", e))?;
+
+    // Merge into local DB
+    let db_guard = db.lock().await;
+    if let Some(conn) = db_guard.as_ref() {
+        let stats = manifest::import_manifest(conn, remote_data)
+            .map_err(|e| format!("Failed to merge manifest: {}", e))?;
+        eprintln!(
+            "[Manifest Sync] Merged: {} photos added, {} updated; {} memories added, {} updated",
+            stats.photos_added, stats.photos_updated, stats.memories_added, stats.memories_updated
+        );
+    }
+
+    Ok(())
+}
+
+/// Upload current manifest to S3
+#[tauri::command]
+async fn sync_manifest_upload(state: State<'_, AppState>) -> Result<(), String> {
+    use crate::manifest;
+
+    let config_guard = state.config.lock().await;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+
+    let vault_key = BASE64
+        .decode(&config.vault_key)
+        .map_err(|e| format!("Invalid vault key: {}", e))?;
+    let key_arr: [u8; 32] = vault_key
+        .try_into()
+        .map_err(|_| "Invalid key length".to_string())?;
+
+    // Export from DB
+    let db_guard = state.db.lock().await;
+    let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+    let data = manifest::export_manifest(conn).map_err(|e| format!("Export failed: {}", e))?;
+
+    // Encrypt
+    let enc_bytes = manifest::encrypt_manifest(&data, &key_arr)
+        .map_err(|e| format!("Encrypt failed: {}", e))?;
+
+    // Upload
+    drop(db_guard);
+    drop(config_guard);
+
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+    storage
+        .upload_file(manifest::MANIFEST_S3_KEY, enc_bytes)
+        .await
+        .map_err(|e| format!("Upload failed: {}", e))?;
+
+    eprintln!("[Manifest Sync] Uploaded manifest to S3");
+    Ok(())
+}
+
+/// Download and merge manifest from S3
+#[tauri::command]
+async fn sync_manifest_download(state: State<'_, AppState>) -> Result<(), String> {
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard
+        .as_ref()
+        .ok_or("Storage not initialized")?
+        .clone();
+    drop(storage_guard);
+
+    let config_guard = state.config.lock().await;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?.clone();
+    drop(config_guard);
+
+    sync_manifest_download_internal(&storage, &state.db, &config).await
 }
 
 #[tauri::command]
@@ -201,26 +342,27 @@ async fn bootstrap_vault(
     let enc_vault_key = crypto::encrypt(&vault_key, &kek)
         .map_err(|e| format!("Failed to encrypt vault key: {}", e))?;
 
-    // 3. Create full config
+    // 3. Create full config (name will be set in SQLite on first load)
     let id = uuid::Uuid::new_v4().to_string();
-    let config = VaultConfig::new(
+    let mut config = VaultConfig::new(
         id.clone(),
-        "My Vault".to_string(), // Default name, user can rename later
         bootstrap.access_key_id,
         bootstrap.secret_access_key,
         bootstrap.region,
         bootstrap.bucket,
         BASE64.encode(kek),
     );
+    // Set legacy name for migration
+    config.name = Some("My Vault".to_string());
 
-    // 4. Setup Storage & Upload Encrypted Key (We need to init storage temporarily)
+    // 4. Setup Storage & Upload Encrypted Key
     let storage = Storage::new(&config).await;
     storage
         .upload_file("vault-key.enc", enc_vault_key)
         .await
         .map_err(|e| format!("Failed to upload vault key: {}", e))?;
 
-    // 5. Save to Stronghold
+    // 5. Save to JSON store
     store::save_vault(&app, &config)?;
 
     // 6. Activate
@@ -542,15 +684,36 @@ async fn sync_thumbnail_cache(
 
 #[tauri::command]
 async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPublic>, String> {
-    let config = state.config.lock().await;
-    match config.as_ref() {
-        Some(c) => Ok(Some(VaultPublic {
-            id: c.id.clone(),
-            name: c.name.clone(),
-            bucket: c.bucket.clone(),
-            visits: c.visits,
-        })),
-        None => Ok(None),
+    let config_guard = state.config.lock().await;
+    let db_guard = state.db.lock().await;
+
+    match (config_guard.as_ref(), db_guard.as_ref()) {
+        (Some(c), Some(conn)) => {
+            let name = db::get_metadata(conn, "name")
+                .map_err(|e| e.to_string())?
+                .unwrap_or_else(|| "Untitled Vault".to_string());
+            let visits: u32 = db::get_metadata(conn, "visits")
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+
+            Ok(Some(VaultPublic {
+                id: c.id.clone(),
+                name,
+                bucket: c.bucket.clone(),
+                visits,
+            }))
+        }
+        (Some(c), None) => {
+            // DB not loaded, return partial info
+            Ok(Some(VaultPublic {
+                id: c.id.clone(),
+                name: "Loading...".to_string(),
+                bucket: c.bucket.clone(),
+                visits: 0,
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -1119,6 +1282,9 @@ pub fn run() {
             get_audio,
             get_supported_extensions,
             rename_vault,
+            // Manifest sync commands
+            sync_manifest_upload,
+            sync_manifest_download,
             // Pairing commands
             start_pairing_mode,
             stop_pairing_mode,

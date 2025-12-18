@@ -52,7 +52,7 @@ export function SegmentedControl<T extends string | number>({
   onChange,
   className,
   handleClassName,
-  size,
+  // size,
 }: SegmentedControlProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -132,7 +132,7 @@ export function SegmentedControl<T extends string | number>({
     setIsDragging(true);
   };
 
-  const handleDrag = (_: any, info: PanInfo) => {
+  const handleDrag = (_: any, _info: PanInfo) => {
     const currentX = x.get();
     // Use center of handle for more accurate detection
     const centerX = currentX + itemWidth / 2;
@@ -143,7 +143,7 @@ export function SegmentedControl<T extends string | number>({
     setDragTargetIndex(enabledIndex);
   };
 
-  const handleDragEnd = (_: any, info: PanInfo) => {
+  const handleDragEnd = (_: any, _info: PanInfo) => {
     setIsDragging(false);
     setDragTargetIndex(null);
 
@@ -260,7 +260,7 @@ export function SegmentedControl<T extends string | number>({
           onDragStart={handleDragStart}
           onDrag={handleDrag}
           onDragEnd={handleDragEnd}
-          onTap={(event, info) => {
+          onTap={(_event, _info) => {
             // On tap, always trigger onChange for the current segment
             // This ensures navigation happens even when tapping the already-active segment
             const currentX = x.get();

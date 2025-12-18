@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { queueManifestSync } from '@/lib/vault';
 
 // ============ Types ============
 
@@ -379,6 +380,11 @@ export const useUploadStore = create<UploadStore>()(
           );
 
           const allDone = updatedFiles.every((f) => isStatusFinal(f.status));
+
+          // Queue manifest sync when all uploads complete
+          if (allDone && updatedFiles.some((f) => f.status === 'Completed')) {
+            queueManifestSync();
+          }
 
           return {
             files: updatedFiles,

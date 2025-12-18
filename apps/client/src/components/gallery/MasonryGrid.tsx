@@ -52,7 +52,7 @@ export interface LayoutItem {
 export function VirtualizedMasonryGrid({
   items,
   columns: initialColumns = 4,
-  spacing = 4,
+  spacing = 8,
   //   paddingX = 0, // Unused
   paddingTop = 0,
   paddingBottom = 0,

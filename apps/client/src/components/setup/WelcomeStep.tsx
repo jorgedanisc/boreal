@@ -1,13 +1,13 @@
-import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
 // import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan, IconWifi } from "@tabler/icons-react";
-import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconWifi } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
-import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
-import { useNavigate } from "@tanstack/react-router";
-import { VaultCard } from "@/components/vault/VaultCard";
-import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 import Aurora from "@/components/ui/aurora";
+import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
+import { VaultCard } from "@/components/vault/VaultCard";
+import { getVaults, loadVault, renameVault, type VaultPublic } from "@/lib/vault";
+import { IconChevronRight, IconDownload, IconLoader, IconPlus, IconWifi } from "@tabler/icons-react";
+import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 // import { getDailyQuote } from "@/lib/quotes";
 import { ScanQrCodeIcon } from "lucide-react";
 
@@ -65,7 +65,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
       {/* Aurora Background */}
       <div className="fixed inset-x-0 -top-8 h-64 overflow-hidden pointer-events-none opacity-25">
         <Aurora
-          colorStops={["#2AEFB6", "#0B7BF5", "#5F03BD"]}
+          colorStops={["#5F03BD", "#2AEFB6", "#0B7BF5"]}
           blend={1.5}
           amplitude={0.7}
           speed={0.35}
@@ -73,15 +73,6 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
       </div>
 
       <div className="w-full max-w-lg space-y-8 animate-in fade-in duration-300 mt-10 relative z-10">
-        {/* <div className="text-center max-w-sm mx-auto opacity-40">
-          <blockquote className="text-sm font-medium italic text-foreground/90 leading-relaxed">
-            "{dailyQuote.quote}"
-            <p className="text-xs text-muted-foreground">
-              — {dailyQuote.author}
-            </p>
-          </blockquote>
-        </div> */}
-
         {loading ? (
           <div className="flex justify-center p-8">
             <IconLoader className="w-8 h-8 animate-spin text-muted-foreground" />

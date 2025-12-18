@@ -1,11 +1,9 @@
-import { GalleryBottomNav } from '@/components/GalleryBottomNav';
-import { MemoryEditor } from '@/components/memories/MemoryEditor';
-import { Button } from '@/components/ui/button';
-
 import { useNavigate } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Sparkles } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useGalleryLayout } from '@/routes/gallery';
+import { BentoMediaGrid } from '@/components/memories/BentoMediaGrid';
 
 interface Memory {
   id: string;
@@ -17,37 +15,24 @@ interface Memory {
   media_ids: string[];
 }
 
-// Placeholder MemoryCard for now, will refine in next step
-function MemoryCard({ memory }: { memory: Memory }) {
-  const [thumbnail, setThumbnail] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (memory.media_ids.length > 0) {
-      invoke<string>('get_thumbnail', { id: memory.media_ids[0] })
-        .then(setThumbnail)
-        .catch(console.error);
-    }
-  }, [memory]);
-
+function MemoryCard({ memory, onClick }: { memory: Memory; onClick: () => void }) {
+  // Removed formattedDate and footer as requested
   return (
-    <div className="bg-card rounded-xl overflow-hidden shadow-sm border border-border/50 hover:shadow-md transition-shadow cursor-pointer group">
-      {memory.media_ids.length > 0 && (
-        <div className="aspect-4/3 bg-muted relative overflow-hidden">
-          {thumbnail ? (
-            <img src={`data:image/webp;base64,${thumbnail}`} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-          ) : (
-            <div className="w-full h-full animate-pulse bg-muted" />
-          )}
-        </div>
-      )}
-      <div className="p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{new Date(memory.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
-        </div>
-        <h3 className="font-bold text-lg leading-tight">{memory.title}</h3>
-        <p className="text-sm text-muted-foreground line-clamp-3 leading-relaxed">
-          {memory.text_content}
-        </p>
+    <div
+      onClick={onClick}
+      className="bg-card rounded-3xl overflow-hidden shadow-sm border border-border/50 hover:shadow-md transition-shadow cursor-pointer group flex flex-col"
+    >
+      {/* Media Grid Top */}
+      <BentoMediaGrid mediaIds={memory.media_ids} />
+
+      {/* Content */}
+      <div className="p-4 flex flex-col gap-2">
+        <h3 className="font-bold text-lg leading-tight text-foreground">{memory.title}</h3>
+        {memory.text_content && (
+          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed">
+            {memory.text_content}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -55,13 +40,16 @@ function MemoryCard({ memory }: { memory: Memory }) {
 
 export default function MemoriesPage() {
   const navigate = useNavigate();
-  // const { getCompletedCount } = useUploadStore(); // Unused
+  const { setSubtitle } = useGalleryLayout();
   const [memories, setMemories] = useState<Memory[]>([]);
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const loadMemories = async () => {
     try {
       const loaded = await invoke<Memory[]>('get_memories');
+      // Sort by date descending
+      loaded.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setMemories(loaded);
     } catch (error) {
       console.error("Failed to load memories:", error);
@@ -72,84 +60,102 @@ export default function MemoriesPage() {
     loadMemories();
   }, []);
 
+  // Reload memories when a new one is saved (triggered by context)
+  useEffect(() => {
+    // Listen for custom event to refresh memories
+    const handleMemorySaved = () => loadMemories();
+    window.addEventListener('memory-saved', handleMemorySaved);
+    return () => window.removeEventListener('memory-saved', handleMemorySaved);
+  }, []);
+
+  // Update subtitle based on scroll position
+  const updateSubtitleFromScroll = useCallback(() => {
+    if (!scrollRef.current || memories.length === 0) {
+      setSubtitle('Timeline');
+      return;
+    }
+
+    const scrollTop = scrollRef.current.scrollTop;
+    const viewportTop = scrollTop + 150; // Account for header
+
+    // Find the first visible memory card
+    let closestMemory: Memory | null = null;
+    let closestDistance = Infinity;
+
+    cardRefs.current.forEach((element, id) => {
+      if (element) {
+        const rect = element.getBoundingClientRect();
+        const elementTop = rect.top + scrollTop - scrollRef.current!.getBoundingClientRect().top;
+        const distance = Math.abs(elementTop - viewportTop);
+
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestMemory = memories.find(m => m.id === id) || null;
+        }
+      }
+    });
+
+    if (closestMemory) {
+      // @ts-ignore - Type checking issue
+      const date = new Date(closestMemory.date);
+      const formatted = date.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+      setSubtitle(formatted);
+    } else {
+      setSubtitle('Timeline');
+    }
+  }, [memories, setSubtitle]);
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+
+    scrollElement.addEventListener('scroll', updateSubtitleFromScroll, { passive: true });
+    // Initial update
+    updateSubtitleFromScroll();
+
+    return () => scrollElement.removeEventListener('scroll', updateSubtitleFromScroll);
+  }, [updateSubtitleFromScroll]);
+
+  const setCardRef = useCallback((id: string, element: HTMLDivElement | null) => {
+    if (element) {
+      cardRefs.current.set(id, element);
+    } else {
+      cardRefs.current.delete(id);
+    }
+  }, []);
+
   return (
-    <div className="text-foreground flex flex-col h-screen bg-background relative overflow-hidden">
-      {/* Header - Reuse style from Gallery */}
-      <header
-        className="fixed top-0 left-0 right-0 z-30 pointer-events-none"
-        style={{
-          paddingTop: "32px", // Fixed desktop padding for now
-        }}
-      >
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'linear-gradient(to bottom, oklch(18.971% 0.00816 296.997) 0%, oklch(18.971% 0.00816 296.997 / 0.9) 50%, oklch(18.971% 0.00816 296.997 / 0) 100%)',
-          }}
-        />
-        <div className="relative flex items-start justify-between p-4 pointer-events-auto">
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => navigate({ to: "/" })}
-                className="shrink-0 -ml-2 h-8 w-8"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </Button>
-              <h1 className="text-xl font-bold tracking-tight px-2">
-                Memories
-              </h1>
-            </div>
-            <p className="text-sm font-medium text-muted-foreground/70 ml-10">
-              Reflections
-            </p>
+    <div
+      ref={scrollRef}
+      className="absolute inset-0 overflow-y-auto overflow-x-hidden pt-[120px] pb-[100px] px-4"
+      style={{ scrollbarGutter: 'stable both-edges' }}
+    >
+      {memories.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
+          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
+            <Sparkles className="w-8 h-8" />
           </div>
-
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => setIsEditorOpen(true)}
-              className="rounded-full px-5 font-semibold bg-foreground text-background hover:bg-foreground/90 transition-colors shadow-lg"
-            >
-              New Entry
-            </Button>
-          </div>
+          <p>No memories yet. Start writing one!</p>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="absolute inset-0 overflow-y-auto overflow-x-hidden pt-[120px] pb-[100px] px-4"
-        style={{
-          scrollbarGutter: 'stable both-edges',
-        }}
-      >
-        {memories.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
-            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-              <Sparkles className="w-8 h-8" />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mx-auto max-w-[2000px]">
+          {memories.map(memory => (
+            <div
+              key={memory.id}
+              ref={(el) => setCardRef(memory.id, el)}
+            >
+              <MemoryCard
+                memory={memory}
+                onClick={() => navigate({ to: '/gallery/memories/$id', params: { id: memory.id } })}
+              />
             </div>
-            <p>No memories yet. Start writing one!</p>
-          </div>
-        ) : (
-          <div className="columns-1 md:columns-2 lg:columns-3 xl:columns-4 gap-4 space-y-4 mx-auto max-w-[1600px]">
-            {memories.map(memory => (
-              <div key={memory.id} className="break-inside-avoid">
-                <MemoryCard memory={memory} />
-              </div>
-            ))}
-          </div>
-        )}
-      </main>
-
-      {/* Bottom Navigation */}
-      <GalleryBottomNav currentView="memories" />
-
-      <MemoryEditor
-        open={isEditorOpen}
-        onOpenChange={setIsEditorOpen}
-        onSave={loadMemories}
-      />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
