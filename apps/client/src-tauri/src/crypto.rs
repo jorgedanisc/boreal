@@ -1,19 +1,32 @@
 use anyhow::Result;
+use argon2::{password_hash::rand_core::OsRng, Argon2, Params};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use hmac::Hmac;
-use pbkdf2::pbkdf2;
-use rand::rngs::OsRng;
 use rand::RngCore;
-use sha2::Sha256;
 
 pub const NONCE_LEN: usize = 12;
 
-pub fn derive_key(pin: &str, salt: &[u8]) -> [u8; 32] {
-    let mut key = [0u8; 32];
-    // 100,000 iterations is a reasonable balance for this use case
-    let _ = pbkdf2::<Hmac<Sha256>>(pin.as_bytes(), salt, 100_000, &mut key);
-    key
+/// Derives a 32-byte key from a PIN using Argon2id.
+///
+/// Parameters are tuned to make brute-forcing expensive (0.5s - 1s per attempt).
+/// Memory: 64MB (64 * 1024), Iterations: 4, Parallelism: 4
+pub fn derive_key(pin: &str, salt: &[u8]) -> Result<[u8; 32]> {
+    // Argon2 params: m=64MB, t=4, p=4
+    let params = Params::new(64 * 1024, 4, 4, Some(32)).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+
+    // Use the provided salt directly (assumes it's high entropy)
+    // We need to convert raw salt bytes to SaltString if possible, or just use hash_password_custom
+    // Since we want a raw 32-byte generic array for ChaCha20, we can use `hash_password`
+    // but `hash_password` returns a PHC string. We want raw bytes.
+
+    // Actually, `argon2` crate provides `hash_password_into`.
+    let mut output_key = [0u8; 32];
+    argon2
+        .hash_password_into(pin.as_bytes(), salt, &mut output_key)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    Ok(output_key)
 }
 
 pub fn generate_key() -> [u8; 32] {

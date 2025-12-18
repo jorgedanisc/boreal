@@ -11,9 +11,14 @@ use tokio::sync::mpsc;
 /// Minimum size for multipart upload (5MB)
 pub const MULTIPART_THRESHOLD: usize = 5 * 1024 * 1024;
 /// Part size for multipart upload (5MB)
+#[allow(dead_code)]
 pub const MULTIPART_PART_SIZE: usize = 5 * 1024 * 1024;
 
+#[allow(dead_code)]
+pub const MAX_RETRIES: u32 = 3;
+
 /// Progress callback for upload tracking
+#[allow(dead_code)]
 pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 #[derive(Clone)]
@@ -64,6 +69,7 @@ impl Storage {
     }
 
     /// Upload a file with the 'fresh' tag for lifecycle rule targeting
+    #[allow(dead_code)]
     pub async fn upload_file_with_tag(
         &self,
         key: &str,

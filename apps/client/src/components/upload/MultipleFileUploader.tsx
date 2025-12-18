@@ -269,40 +269,10 @@ export function MultipleFileUploader() {
   return (
     <>
       {/* Trigger Button (FAB) */}
-      {isMinimized && (files.length > 0 || isProcessing) && (
-        <Button
-          variant="outline"
-          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full shadow-lg gap-2 pl-3 pr-4 h-10 border-border/50 bg-background/80 backdrop-blur-md hover:bg-muted/80"
-          onClick={() => setIsOpen(true)}
-        >
-          {isProcessing ? (
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          ) : getFailedCount() > 0 ? (
-            <AlertTriangle className="h-4 w-4 text-destructive" />
-          ) : (
-            <Check className="h-4 w-4 text-green-500" />
-          )}
-
-          <span className="text-sm font-medium">
-            {isProcessing || getActiveCount() > 0 ? (
-              `Uploading ${getActiveCount()}...`
-            ) : getFailedCount() > 0 ? (
-              `${getFailedCount()} failed`
-            ) : (
-              "Uploads Ready"
-            )}
-          </span>
-
-          {isProcessing && (
-            <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden ml-2">
-              <div
-                className="h-full bg-primary transition-all duration-300"
-                style={{ width: `${overallProgress * 100}%` }}
-              />
-            </div>
-          )}
-        </Button>
-      )}
+      {/* Trigger Button (FAB) removed as per request */}
+      {/* {isMinimized && (files.length > 0 || isProcessing) && (
+        <Button ... />
+      )} */}
 
       <Drawer open={isOpen} onOpenChange={setIsOpen}>
         <DrawerContent className="h-[65%] max-w-xl w-[calc(100%-16px)] mx-auto flex flex-col">

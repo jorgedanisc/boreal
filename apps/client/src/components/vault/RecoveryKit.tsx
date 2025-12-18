@@ -2,89 +2,99 @@ import QRCode from "react-qr-code";
 
 interface RecoveryKitProps {
   vaultName: string;
-  qrData: string;
-  pin: string;
   rawCode: string;
 }
 
-export function RecoveryKit({ vaultName, qrData, pin, rawCode }: RecoveryKitProps) {
+// Deep link to the manual recovery page in the app
+const MANUAL_RECOVERY_URL = "boreal://recover";
+
+export function RecoveryKit({ vaultName, rawCode }: RecoveryKitProps) {
+  const formattedRawCode = (() => {
+    try {
+      return JSON.stringify(JSON.parse(rawCode), null, 2);
+    } catch {
+      return rawCode;
+    }
+  })();
+
+  const generatedDate = new Date().toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+
   return (
     <div className="recovery-kit-container bg-white text-black p-8 font-serif max-w-[210mm] mx-auto border border-gray-200 shadow-sm print:shadow-none print:border-none print:m-0 print:p-0 print:w-full print:max-w-none">
 
       {/* Print Styles */}
       <style>{`
         @media print {
-          /* Hide everything in body ... */
           body > *:not(#print-portal-root) { display: none !important; }
-          
-          /* ... Except our portal root */
           #print-portal-root { 
             display: block !important; 
             position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0; 
+            width: 100%; height: 100%;
             background: white;
             z-index: 9999;
           }
-          
-          /* And ensure the kit itself is good */
-          #recovery-kit-root {
-            width: 100%;
-            height: 100%;
-          }
-
+          #recovery-kit-root { width: 100%; height: 100%; }
           @page { margin: 0; size: auto; }
         }
       `}</style>
 
       <div id="recovery-kit-root" className="p-12 max-w-[210mm] mx-auto">
-        <header className="mb-8 border-b-2 border-black pb-4">
-          <h1 className="text-3xl font-bold mb-2 uppercase tracking-wide">Recovery Kit</h1>
-          <p className="text-gray-600 italic">Boreal Vault Security Document</p>
+        <header className="mb-8 border-b-2 border-black pb-4 flex justify-between items-end">
+          <div>
+            <h1 className="text-3xl font-bold mb-2 uppercase tracking-wide">Recovery Kit</h1>
+            <p className="text-gray-600 italic">Boreal Vault Security Document</p>
+          </div>
+          <p className="text-xs text-gray-400 mb-1">{generatedDate}</p>
         </header>
 
         <section className="mb-8 flex flex-row items-start gap-8">
           <div className="shrink-0">
             <div className="border-2 border-black p-2 inline-block">
               <QRCode
-                value={qrData}
+                value={MANUAL_RECOVERY_URL}
                 size={150}
                 level="L"
               />
             </div>
-            <p className="mt-2 text-xs text-center font-mono text-gray-500">SCAN TO IMPORT</p>
+            <p className="mt-2 text-xs text-center font-mono text-gray-500">SCAN TO OPEN RECOVERY</p>
           </div>
 
           <div className="flex-1 pt-2">
             <h2 className="text-xl font-bold mb-1">Vault: {vaultName}</h2>
-            <p className="text-sm text-gray-600 mb-6">
+            <p className="text-sm text-gray-600 mb-4">
               This document contains the keys to access your secure vault.
               Store it in a physically secure location, such as a safe.
             </p>
-
-            <div className="bg-gray-100 border border-gray-300 p-4 rounded-md">
-              <p className="text-xs uppercase font-bold text-gray-500 mb-1">Pairing PIN</p>
-              <p className="text-4xl font-mono font-bold tracking-widest">{pin}</p>
-            </div>
+            <p className="text-xs text-gray-500 italic">
+              The QR code opens the recovery page where you can manually enter
+              the raw recovery data below.
+            </p>
           </div>
         </section>
 
         <section className="mb-8">
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded text-amber-900 text-sm">
-            <strong>WARNING:</strong> Anyone with this document can access your vault.
-            Do not share it digitally. Do not photograph it.
+          <div className="bg-red-50 border border-red-200 p-4 rounded text-red-900 text-sm flex gap-3 items-start">
+            <div className="font-bold text-lg mt-0.5">⚠️</div>
+            <div>
+              <strong className="block mb-1">CRITICAL WARNING</strong>
+              Anyone with this document can access your files.
+              Do not store this digitally. Do not take a photo of this.
+              Burn or shred after use if shifting purely to digital storage.
+            </div>
           </div>
         </section>
 
         <section>
           <h3 className="font-bold mb-2 uppercase text-sm border-b border-gray-300 pb-1">Raw Recovery Data</h3>
-          <p className="text-xs text-gray-500 mb-2">
-            If the QR code is unreadable, you can manually enter this data to recover your vault.
+          <p className="text-xs text-gray-500 mb-3">
+            <strong>Type this data manually</strong> into the recovery page.
+            Do not copy/paste digitally or photograph this document.
           </p>
-          <pre className="font-mono text-[9px] bg-gray-50 p-2 border border-gray-200 whitespace-pre-wrap break-all leading-tight text-gray-700">
-            {rawCode}
+          <pre className="font-mono text-[9px] bg-gray-50 p-3 border border-gray-200 whitespace-pre-wrap break-all leading-tight text-gray-700">
+            {formattedRawCode}
           </pre>
         </section>
 

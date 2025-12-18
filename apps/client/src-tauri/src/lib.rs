@@ -570,19 +570,20 @@ async fn create_export_qr(app: AppHandle, id: String) -> Result<ExportViewData, 
     let mut salt = [0u8; 16];
     rng.fill_bytes(&mut salt);
 
-    // 4. Derive Key
-    let key = crypto::derive_key(&pin_string, &salt);
+    // 4. Derive Key using Argon2id (Slow!)
+    let key = crypto::derive_key(&pin_string, &salt).map_err(|e| e.to_string())?;
 
-    // 5. Encrypt (Salt + Nonce + Ciphertext)
-    // crypto::encrypt already prepends Nonce. We prepend Salt manually.
+    // 5. Encrypt (Nonce + Ciphertext)
     let encrypted_data = crypto::encrypt(json.as_bytes(), &key).map_err(|e| e.to_string())?;
 
+    // 6. Construct Payload: Salt (16) + Encrypted Data (Nonce + Ciphertext)
     let mut final_blob = salt.to_vec();
     final_blob.extend(encrypted_data);
 
-    // 6. Encode Base64
+    // 7. Encode Base64
     let b64_data = BASE64.encode(final_blob);
-    let url = format!("boreal://import?data={}", b64_data);
+
+    let url = format!("boreal://import?&data={}", b64_data);
 
     Ok(ExportViewData {
         qr_url: url,
@@ -603,15 +604,39 @@ async fn decrypt_import(encrypted_data: String, pin: String) -> Result<String, S
     // Extract Salt
     let (salt, rest) = blob.split_at(16);
 
-    // Derive Key
-    let key = crypto::derive_key(&pin, salt);
+    // Derive Key using Argon2id (Slow verify)
+    let key = crypto::derive_key(&pin, salt).map_err(|e| e.to_string())?;
 
     // Decrypt (rest contains Nonce + Ciphertext, which crypto::decrypt expects)
-    let plaintext =
-        crypto::decrypt(rest, &key).map_err(|_| "Decryption failed. Wrong PIN?".to_string())?;
+    let plaintext = crypto::decrypt(rest, &key)
+        .map_err(|_| "Decryption failed. Wrong PIN or Corrupted Data.".to_string())?;
 
     let json = String::from_utf8(plaintext).map_err(|e| e.to_string())?;
     Ok(json)
+}
+
+#[tauri::command]
+async fn check_biometrics(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_biometry::BiometryExt;
+
+    // Check if biometry is available on this platform
+    let status = app.biometry().status().map_err(|e| e.to_string())?;
+    Ok(status.is_available)
+}
+
+#[tauri::command]
+fn authenticate_biometrics(app: AppHandle, reason: String) -> Result<(), String> {
+    use tauri_plugin_biometry::{AuthOptions, BiometryExt};
+
+    app.biometry()
+        .authenticate(
+            reason,
+            AuthOptions {
+                allow_device_credential: Some(true), // Allow password/PIN fallback
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())
 }
 
 // ============ Upload Queue Commands ============
@@ -634,7 +659,7 @@ async fn add_files_to_queue(
     upload_state: State<'_, UploadManagerState>,
     payload: AddFilesPayload,
 ) -> Result<AddFilesResult, String> {
-    let mut manager_guard = upload_state.manager.lock().await;
+    let manager_guard = upload_state.manager.lock().await;
     let manager = manager_guard
         .as_ref()
         .ok_or("Upload manager not initialized")?;
@@ -896,6 +921,7 @@ pub fn run() {
                 app.emit("menu:open_cache_folder", ()).ok();
             }
         })
+        .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -926,6 +952,8 @@ pub fn run() {
             get_active_vault,
             create_export_qr,
             decrypt_import,
+            check_biometrics,
+            authenticate_biometrics,
             // Upload queue commands
             add_files_to_queue,
             get_upload_queue_status,

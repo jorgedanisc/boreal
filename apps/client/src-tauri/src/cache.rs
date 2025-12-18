@@ -110,7 +110,7 @@ impl ThumbnailCache {
             return Ok(());
         }
         // Need to evict some entries
-        let mut to_free = (current + needed).saturating_sub(self.max_size);
+        let to_free = (current + needed).saturating_sub(self.max_size);
         // Get entries sorted by last access (oldest first)
         let mut sorted_entries: Vec<(String, CacheEntry)>;
         {
@@ -146,6 +146,7 @@ impl ThumbnailCache {
         Ok(())
     }
     /// Clear all cached thumbnails
+    #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
         if let Ok(dir) = fs::read_dir(&self.cache_dir) {
             for entry in dir.flatten() {
@@ -159,10 +160,12 @@ impl ThumbnailCache {
         Ok(())
     }
     /// Get current cache size in bytes
+    #[allow(dead_code)]
     pub fn size(&self) -> u64 {
         *self.total_size.read().unwrap()
     }
     /// Get number of cached items
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.entries.read().unwrap().len()
     }

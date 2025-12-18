@@ -47,6 +47,7 @@ pub fn set_metadata(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn get_metadata(conn: &Connection, key: &str) -> Result<Option<String>> {
     let mut stmt = conn.prepare("SELECT value FROM metadata WHERE key = ?1")?;
     let mut rows = stmt.query([key])?;

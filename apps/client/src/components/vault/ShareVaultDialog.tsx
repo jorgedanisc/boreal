@@ -7,7 +7,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { createExportQr, exportVault } from "@/lib/vault";
+import { createExportQr, exportVault, authenticateBiometrics } from "@/lib/vault";
 import { IconCheck, IconCopy, IconPrinter, IconQrcode } from "@tabler/icons-react";
 import { useState } from "react";
 import QRCode from "react-qr-code";
@@ -62,13 +62,22 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
     if (!exportData) return;
     setPrinting(true);
     try {
-      // Fetch data if needed
+      // 1. Enforce Biometric/Password Authentication
+      try {
+        await authenticateBiometrics("Authorize to print Recovery Kit");
+      } catch (e) {
+        alert("Authentication required. Cannot print recovery kit.");
+        setPrinting(false);
+        return;
+      }
+
+      // 2. Fetch data (Raw Vault Data)
       if (!recoveryCode) {
         const code = await exportVault(vaultId);
         setRecoveryCode(code);
       }
 
-      // Allow render to update with new data before printing
+      // 3. Print
       setTimeout(() => {
         const originalTitle = document.title;
         document.title = "Boreal Recovery Kit"; // This sets the default PDF filename
@@ -100,7 +109,7 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
           <DialogHeader>
             <DialogTitle>Share Vault</DialogTitle>
             <DialogDescription>
-              Scan this code with another device to import the vault securely.
+              Use the QR code or link to transfer this vault to another device.
             </DialogDescription>
           </DialogHeader>
 
@@ -112,12 +121,13 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
               </div>
             ) : exportData ? (
               <>
-                <div className="bg-white p-4 rounded-xl border shadow-sm">
+                <div className="bg-white p-4 rounded-xl border shadow-sm relative group">
                   <QRCode
                     value={exportData.qr_url}
                     size={200}
                     level="L"
                   />
+                  {/* Overlay for screenshot protection visual cue? No, Argon2 protects us. */}
                 </div>
 
                 {/* Constrain width to match QR Code (approx 200px + padding) */}
@@ -170,19 +180,19 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
             )}
           </div>
         </DialogContent>
-      </Dialog>
+      </Dialog >
 
       {/* Hidden Recovery Kit for Printing */}
-      {exportData && (
-        <PrintPortal>
-          <RecoveryKit
-            vaultName="My Boreal Vault"
-            qrData={exportData.qr_url}
-            pin={exportData.pin}
-            rawCode={recoveryCode || "Raw data loading..."}
-          />
-        </PrintPortal>
-      )}
+      {
+        exportData && (
+          <PrintPortal>
+            <RecoveryKit
+              vaultName="My Boreal Vault"
+              rawCode={recoveryCode || "Loading..."}
+            />
+          </PrintPortal>
+        )
+      }
     </>
   );
 }

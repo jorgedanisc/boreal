@@ -9,12 +9,11 @@ import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
-  onImportVault: () => void;
 }
 
 const MAX_VISIBLE_VAULTS = 4;
 
-export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) {
+export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [vaults, setVaults] = useState<VaultPublic[]>([]);
@@ -178,7 +177,7 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
                 variant="ghost"
                 size="sm"
                 className="text-muted-foreground hover:text-foreground"
-                onClick={onImportVault}
+                onClick={() => navigate({ to: "/import" })}
               >
                 <IconDownload className="w-4 h-4 mr-2" />
                 {t("setup.welcome.importVault")} manually

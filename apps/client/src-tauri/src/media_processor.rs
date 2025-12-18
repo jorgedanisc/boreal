@@ -26,10 +26,12 @@ pub struct ProcessedMedia {
     /// Encoded original file bytes
     pub original: Vec<u8>,
     /// S3 key for original (e.g., "originals/images/2024/12/{id}.webp")
+    #[allow(dead_code)]
     pub original_extension: String,
     /// Encoded thumbnail bytes (images and videos only)
     pub thumbnail: Option<Vec<u8>>,
     /// Animated preview bytes (videos only)
+    #[allow(dead_code)]
     pub preview: Option<Vec<u8>>,
     /// Media width in pixels
     pub width: u32,
@@ -38,12 +40,16 @@ pub struct ProcessedMedia {
 }
 
 /// Initialize FFmpeg (call once at startup)
+#[allow(dead_code)]
 pub fn init() -> Result<()> {
-    ffmpeg::init().context("Failed to initialize FFmpeg")?;
+    // Check if ffmpeg is available
+    if !is_available() {
+        return Err(anyhow::anyhow!("ffmpeg not found in PATH"));
+    }
     Ok(())
 }
 
-/// Check if FFmpeg is available and properly initialized
+#[allow(dead_code)]
 pub fn is_available() -> bool {
     ffmpeg::init().is_ok()
 }
@@ -336,7 +342,6 @@ async fn transcode_video_h265(
     input_path: &Path,
     output_path: &Path,
 ) -> Result<Vec<u8>> {
-    use tauri_plugin_shell::process::CommandEvent;
     use tauri_plugin_shell::ShellExt;
 
     // Sidecar command arguments

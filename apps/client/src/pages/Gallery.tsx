@@ -1,23 +1,23 @@
-import { useState, useEffect, useMemo } from 'react';
-import { getPhotos, getThumbnail, Photo, getActiveVault, VaultPublic, renameVault } from '../lib/vault';
-import { ChevronLeft, Image as ImageIcon, Pencil } from 'lucide-react';
-import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
-import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
-import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { MultipleFileUploader } from '@/components/upload/MultipleFileUploader';
 import { UploadTrigger } from '@/components/upload/UploadTrigger';
+import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { useUploadStore } from '@/stores/upload_store';
+import { useNavigate } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
+import { ChevronLeft, Image as ImageIcon, TextCursorInputIcon } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
+import { getActiveVault, getPhotos, getThumbnail, Photo, renameVault, VaultPublic } from '../lib/vault';
 
 // Custom Gallery Components
-import { MasonryGrid, MediaItem } from '@/components/gallery/MasonryGrid';
 import { AudioPlayer } from '@/components/gallery/AudioPlayer';
+import { MasonryGrid, MediaItem } from '@/components/gallery/MasonryGrid';
 
 // Lightbox
 import Lightbox from "yet-another-react-lightbox";
-import "yet-another-react-lightbox/styles.css";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
+import "yet-another-react-lightbox/styles.css";
 
 export default function Gallery() {
   const navigate = useNavigate();
@@ -149,7 +149,7 @@ export default function Gallery() {
             <div>
               <h1 className="text-lg font-semibold leading-tight flex items-center gap-2">
                 {activeVault?.name || "Photos"}
-                <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                <TextCursorInputIcon className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
               </h1>
               {activeVault && (
                 <p className="text-xs text-muted-foreground truncate max-w-[150px]">

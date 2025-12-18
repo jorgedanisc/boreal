@@ -3,16 +3,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { WelcomeStep } from "./WelcomeStep";
 import { ConfigureStep } from "./ConfigureStep";
 import { ConnectAwsStep } from "./ConnectAwsStep";
-import { ImportStep } from "./ImportStep";
 import { CompleteStep } from "./CompleteStep";
-import { importVault } from "../../lib/vault";
 import type { StorageTier } from "../../lib/aws-config";
 
 type WizardStep =
   | "welcome"
   | "configure"
   | "connect-aws"
-  | "import"
   | "complete";
 
 interface WizardState {
@@ -23,19 +20,16 @@ interface WizardState {
 
 export function SetupWizard() {
   const navigate = useNavigate();
+  // Mode handling moved to dedicated routes
+
   const [state, setState] = useState<WizardState>({
     step: "welcome",
     region: "",
     tier: null,
   });
-  const [, setError] = useState<string | null>(null);
 
   const handleCreateVault = () => {
     setState(s => ({ ...s, step: "configure" }));
-  };
-
-  const handleImportVault = () => {
-    setState(s => ({ ...s, step: "import" }));
   };
 
   const handleConfigure = (region: string, tier: StorageTier) => {
@@ -44,15 +38,6 @@ export function SetupWizard() {
 
   const handleVaultBootstrapped = () => {
     setState(s => ({ ...s, step: "complete" }));
-  };
-
-  const handleVaultCode = async (vaultCode: string) => {
-    try {
-      await importVault(vaultCode);
-      setState(s => ({ ...s, step: "complete" }));
-    } catch (e: any) {
-      setError(e.message);
-    }
   };
 
   const handleComplete = () => {
@@ -68,7 +53,6 @@ export function SetupWizard() {
       return (
         <WelcomeStep
           onCreateVault={handleCreateVault}
-          onImportVault={handleImportVault}
         />
       );
 
@@ -87,14 +71,6 @@ export function SetupWizard() {
           tier={state.tier!}
           onBack={() => handleBack("configure")}
           onComplete={handleVaultBootstrapped}
-        />
-      );
-
-    case "import":
-      return (
-        <ImportStep
-          onBack={() => handleBack("welcome")}
-          onComplete={handleVaultCode}
         />
       );
 

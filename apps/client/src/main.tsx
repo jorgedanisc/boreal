@@ -18,13 +18,11 @@ declare module "@tanstack/react-router" {
 // Handle deep links
 async function handleDeepLink(urls: string[]) {
   for (const url of urls) {
-    // boreal://import?data=... - encrypted vault import
+    // boreal://import?data=... - encrypted vault import (from QR scan)
     if (url.includes("import") && url.includes("data=")) {
       try {
-        // Simple extraction to avoid URL parsing issues with custom schemes if inconsistent
         const data = url.split("data=")[1].split("&")[0];
         if (data) {
-          // Pass data as search param using untyped object to bypass strict route typing temporarily
           router.navigate({ to: "/scan", search: { data } as any });
           return;
         }
@@ -33,10 +31,16 @@ async function handleDeepLink(urls: string[]) {
       }
     }
 
+    // boreal://recover - opens the manual recovery/import page
+    if (url.includes("recover")) {
+      router.navigate({ to: "/import" });
+      return;
+    }
+
     // boreal://scan - opens the scan page
     if (url.includes("scan")) {
-      router.navigate({ to: "/scan" })
-      return
+      router.navigate({ to: "/scan" });
+      return;
     }
   }
 }

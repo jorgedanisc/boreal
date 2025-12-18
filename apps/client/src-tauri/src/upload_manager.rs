@@ -88,25 +88,6 @@ pub struct QueueState {
     pub pending_count: usize,
 }
 
-/// Events emitted to the frontend
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type")]
-pub enum UploadEvent {
-    #[serde(rename = "progress")]
-    Progress {
-        id: String,
-        progress: f64,
-        status: UploadStatus,
-        bytes_uploaded: u64,
-        total_bytes: u64,
-    },
-    #[serde(rename = "completed")]
-    Completed { id: String },
-    #[serde(rename = "failed")]
-    Failed { id: String, error: String },
-    #[serde(rename = "queue_changed")]
-    QueueChanged { state: QueueState },
-}
 
 pub struct UploadManager {
     queue: Arc<RwLock<HashMap<String, UploadItem>>>,
@@ -902,6 +883,7 @@ impl UploadManager {
         Self::update_status_static(&self.queue, &self.app_handle, id, status).await;
     }
 
+    #[allow(dead_code)]
     async fn update_progress(&self, id: &str, progress: f64) {
         let bytes = {
             let queue = self.queue.read().await;

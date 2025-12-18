@@ -164,10 +164,33 @@ export async function openCacheFolder(): Promise<void> {
  * @param id The audio file ID
  * @returns Base64 encoded audio data
  */
+
 export async function getAudio(id: string): Promise<string> {
   try {
     return await invoke('get_audio', { id });
   } catch (e) {
     throw new Error(String(e));
   }
+}
+
+/**
+ * Checks if biometric authentication is available.
+ * @returns boolean indicating availability 
+ */
+export async function checkBiometrics(): Promise<boolean> {
+  try {
+    return await invoke('check_biometrics');
+  } catch (e) {
+    console.error("Biometrics check failed or unavailable:", e);
+    return false;
+  }
+}
+
+/**
+ * Prompts the user for biometric authentication (Touch ID, Face ID, Windows Hello, or password fallback).
+ * @param reason The reason to display to the user
+ * @throws if authentication fails or is cancelled
+ */
+export async function authenticateBiometrics(reason: string): Promise<void> {
+  return await invoke('authenticate_biometrics', { reason });
 }

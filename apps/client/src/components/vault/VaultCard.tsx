@@ -1,4 +1,3 @@
-import { IconLock, IconLoader, IconDotsVertical, IconPencil, IconChevronRight } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -7,6 +6,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { IconChevronRight, IconDotsVertical, IconLoader, IconLock } from "@tabler/icons-react";
+import { TextCursorInputIcon } from "lucide-react";
 
 interface VaultCardProps {
   vault: any;
@@ -74,7 +75,7 @@ export function VaultCard({
                 e.stopPropagation();
                 onRename(vault.id);
               }}>
-                <IconPencil className="w-3 h-3 mr-2" />
+                <TextCursorInputIcon className="w-3 h-3 mr-2" />
                 Rename
               </DropdownMenuItem>
             </DropdownMenuContent>
