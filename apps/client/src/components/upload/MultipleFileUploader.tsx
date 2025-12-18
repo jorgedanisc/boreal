@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { useUploadStore, UploadStatus } from "@/stores/upload_store";
+import { useUploadStore } from "@/stores/upload_store";
 import { cn, formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,7 +34,7 @@ interface DragDropPayload {
   position: { x: number; y: number };
 }
 
-const getFileIconByName = (name: string, isSmall = false, className = "") => {
+const getFileIconByName = (_name: string, _isSmall = false, className = "") => {
   return <FileIcon className={cn("text-muted-foreground", className)} />;
 };
 
@@ -58,13 +58,14 @@ export function MultipleFileUploader() {
     getPendingCount,
     getActiveCount,
     getFailedCount,
-    getCompletedCount,
+    // getCompletedCount,
+    // toggleFreshUpload,
     getOverallProgress,
     getTotalSize,
     getTotalBytesUploaded,
     initializeListeners,
     freshUploadEnabled,
-    toggleFreshUpload,
+    // toggleFreshUpload,
     setFreshUpload,
   } = useUploadStore();
 
@@ -109,7 +110,7 @@ export function MultipleFileUploader() {
 
     const setupListeners = async () => {
       // Listen for drag enter
-      unlistenEnter = await listen<DragDropPayload>('tauri://drag-enter', (event) => {
+      unlistenEnter = await listen<DragDropPayload>('tauri://drag-enter', (_event) => {
         if (!isProcessing) {
           setIsDragging(true);
         }
@@ -171,10 +172,10 @@ export function MultipleFileUploader() {
     };
   }, [isMinimized, toggleMinimized]);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // const fileInputRef = useRef<HTMLInputElement>(null);
+  // const maxFiles = 250;
 
   // Derived state from store
-  const maxFiles = 250;
 
   // Handle native file dialog via Tauri
   const handleAddFiles = async () => {

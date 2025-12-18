@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getPhotos, getThumbnail, Photo, getActiveVault, VaultPublic } from '../lib/vault';
-import { ChevronLeft, Image as ImageIcon } from 'lucide-react';
+import { getPhotos, getThumbnail, Photo, getActiveVault, VaultPublic, renameVault } from '../lib/vault';
+import { ChevronLeft, Image as ImageIcon, Pencil } from 'lucide-react';
+import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,9 @@ export default function Gallery() {
 
   // Audio Player State
   const [audioPlayer, setAudioPlayer] = useState<{ id: string; filename: string } | null>(null);
+
+  // Rename State
+  const [renameOpen, setRenameOpen] = useState(false);
 
   // Initialize upload manager when vault is loaded
   useEffect(() => {
@@ -140,15 +144,19 @@ export default function Gallery() {
           >
             <ChevronLeft className="w-5 h-5" />
           </Button>
-          <div>
-            <h1 className="text-lg font-semibold leading-tight">
-              {activeVault?.name || "Photos"}
-            </h1>
-            {activeVault && (
-              <p className="text-xs text-muted-foreground truncate max-w-[150px]">
-                {activeVault.bucket}
-              </p>
-            )}
+
+          <div className="group flex items-center gap-2 cursor-pointer" onClick={() => activeVault && setRenameOpen(true)}>
+            <div>
+              <h1 className="text-lg font-semibold leading-tight flex items-center gap-2">
+                {activeVault?.name || "Photos"}
+                <Pencil className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+              </h1>
+              {activeVault && (
+                <p className="text-xs text-muted-foreground truncate max-w-[150px]">
+                  {activeVault.bucket}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -156,7 +164,7 @@ export default function Gallery() {
           {activeVault && <ShareVaultDialog vaultId={activeVault.id} />}
           <UploadTrigger />
         </div>
-      </header>
+      </header >
 
       <main className="flex-1 p-2">
         {photos.length === 0 ? (
@@ -196,6 +204,19 @@ export default function Gallery() {
 
       {/* Upload Panel - Fixed at Bottom Center */}
       <MultipleFileUploader />
-    </div>
+
+      {/* Header Rename Dialog */}
+      <RenameVaultDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        vaultName={activeVault?.name || ""}
+        onConfirm={async (newName) => {
+          if (activeVault) {
+            await renameVault(activeVault.id, newName);
+            setActiveVault(prev => prev ? { ...prev, name: newName } : null);
+          }
+        }}
+      />
+    </div >
   );
 }

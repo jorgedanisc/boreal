@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { getVaults, loadVault, type VaultPublic } from "@/lib/vault";
+import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { IconArrowLeft, IconSearch, IconLock, IconChevronRight, IconLoader } from "@tabler/icons-react";
+import { IconArrowLeft, IconSearch, IconLoader } from "@tabler/icons-react";
+import { VaultCard } from "@/components/vault/VaultCard";
+import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 
 export function VaultsPage() {
   const navigate = useNavigate();
@@ -12,13 +14,29 @@ export function VaultsPage() {
   const [loading, setLoading] = useState(true);
   const [openLoading, setOpenLoading] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [renameId, setRenameId] = useState<string | null>(null);
 
   useEffect(() => {
+    fetchVaults();
+  }, []);
+
+  const fetchVaults = () => {
     getVaults()
       .then(setVaults)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  const handleRename = async (newName: string) => {
+    if (!renameId) return;
+    try {
+      await renameVault(renameId, newName);
+      fetchVaults();
+      setRenameId(null);
+    } catch (e) {
+      console.error("Failed to rename vault:", e);
+    }
+  };
 
   const handleOpenVault = async (id: string) => {
     setOpenLoading(id);
@@ -73,29 +91,24 @@ export function VaultsPage() {
             </div>
           ) : (
             filteredVaults.map((vault) => (
-              <button
+              <VaultCard
                 key={vault.id}
-                onClick={() => handleOpenVault(vault.id)}
-                disabled={!!openLoading}
-                className="flex items-center gap-4 p-4 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all text-left w-full group"
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
-                  {openLoading === vault.id ? (
-                    <IconLoader className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <IconLock className="w-5 h-5" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{vault.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{vault.bucket}</p>
-                </div>
-                <IconChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-              </button>
+                vault={vault}
+                openLoading={openLoading}
+                onOpen={handleOpenVault}
+                onRename={setRenameId}
+              />
             ))
           )}
         </div>
       </ScrollArea>
+
+      <RenameVaultDialog
+        open={!!renameId}
+        onOpenChange={(open) => !open && setRenameId(null)}
+        vaultName={vaults.find(v => v.id === renameId)?.name || ""}
+        onConfirm={handleRename}
+      />
     </div>
   );
 }

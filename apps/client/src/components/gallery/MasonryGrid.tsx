@@ -51,7 +51,7 @@ export function MasonryGrid({
   const [columns, setColumns] = useState(initialColumns);
   const containerRef = useRef<HTMLDivElement>(null);
   const { width: containerWidth = 0 } = useResizeObserver({
-    ref: containerRef,
+    ref: containerRef as any,
     box: 'border-box',
   });
 
@@ -135,7 +135,7 @@ export function MasonryGrid({
   useGesture(
     {
       // onPinch handles actual touch pinch (mobile/tablets) and some trackpads
-      onPinch: ({ offset: [scale], direction: [dir], first }) => {
+      onPinch: ({ offset: [_scale], direction: [dir], first }) => {
         // Reset accumulator on first touch
         if (first) {
           pinchAccumulator.current = 0;

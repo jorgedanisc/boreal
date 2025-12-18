@@ -27,5 +27,34 @@ pub fn init_db(path: &Path) -> Result<Connection> {
     )
     .ok(); // Ignore error if column already exists
 
+    // Migration: Create metadata table for syncing vault properties (visits, name, etc.)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
+    )?;
+
     Ok(conn)
+}
+
+pub fn set_metadata(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+        [key, value],
+    )?;
+    Ok(())
+}
+
+pub fn get_metadata(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT value FROM metadata WHERE key = ?1")?;
+    let mut rows = stmt.query([key])?;
+
+    if let Some(row) = rows.next()? {
+        let value: String = row.get(0)?;
+        Ok(Some(value))
+    } else {
+        Ok(None)
+    }
 }

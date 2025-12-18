@@ -12,11 +12,20 @@ export interface VaultPublic {
   id: string;
   name: string;
   bucket: string;
+  visits: number;
 }
 
 export async function getVaults(): Promise<VaultPublic[]> {
   try {
     return await invoke('get_vaults');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+export async function renameVault(id: string, newName: string): Promise<void> {
+  try {
+    await invoke('rename_vault', { id, newName });
   } catch (e) {
     throw new Error(String(e));
   }

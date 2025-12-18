@@ -12,6 +12,8 @@ pub struct VaultConfig {
     pub bucket: String,
     #[serde(default)]
     pub vault_key: String,
+    #[serde(default)]
+    pub visits: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -19,6 +21,7 @@ pub struct VaultPublic {
     pub id: String,
     pub name: String,
     pub bucket: String,
+    pub visits: u32,
 }
 
 impl VaultConfig {
@@ -39,6 +42,7 @@ impl VaultConfig {
             region,
             bucket,
             vault_key,
+            visits: 0,
         }
     }
 }
@@ -93,6 +97,7 @@ pub mod store {
                 id: v.id,
                 name: v.name,
                 bucket: v.bucket,
+                visits: v.visits,
             })
             .collect())
     }

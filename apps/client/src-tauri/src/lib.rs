@@ -39,7 +39,10 @@ use crate::vault::{store, VaultPublic};
 
 #[tauri::command]
 async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
-    store::get_vaults(&app)
+    let mut vaults = store::get_vaults(&app)?;
+    // Sort by visits descending
+    vaults.sort_by(|a, b| b.visits.cmp(&a.visits));
+    Ok(vaults)
 }
 
 #[tauri::command]
@@ -50,7 +53,11 @@ async fn load_vault(
     id: String,
 ) -> Result<(), String> {
     // 1. Get config from Stronghold
-    let config = store::load_vault(&app, &id)?;
+    let mut config = store::load_vault(&app, &id)?;
+
+    // 1b. Increment visits and update both JSON and SQL
+    config.visits += 1;
+    store::save_vault(&app, &config)?;
 
     // 2. Validate key
     let _ = BASE64
@@ -79,6 +86,62 @@ async fn load_vault(
     *state.storage.lock().await = Some(storage);
     *state.db.lock().await = Some(conn);
     *state.config.lock().await = Some(config.clone());
+
+    // 7. Update Metadata in SQL (for sync compatibility)
+    // We do this AFTER initializing state.db so we can reuse the connection logic if needed,
+    // but here we already have `conn` in scope.
+    // Re-acquire lock or just use the local `conn` if it wasn't moved?
+    // `conn` was moved into the Mutex above. Let's get it back from the lock.
+    {
+        let db_guard = state.db.lock().await;
+        if let Some(conn) = db_guard.as_ref() {
+            db::set_metadata(conn, "visits", &config.visits.to_string())
+                .map_err(|e| format!("Failed to update metadata visits: {}", e))?;
+            db::set_metadata(conn, "name", &config.name)
+                .map_err(|e| format!("Failed to update metadata name: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn rename_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    new_name: String,
+) -> Result<(), String> {
+    // 1. Update local JSON registry
+    let mut config = store::load_vault(&app, &id)?;
+    config.name = new_name.clone();
+    store::save_vault(&app, &config)?;
+
+    // 2. Update active state if this is the currently loaded vault
+    {
+        let mut config_guard = state.config.lock().await;
+        if let Some(current) = config_guard.as_mut() {
+            if current.id == id {
+                current.name = new_name.clone();
+                // Also update SQL metadata immediately
+                let db_guard = state.db.lock().await;
+                if let Some(conn) = db_guard.as_ref() {
+                    db::set_metadata(conn, "name", &new_name)
+                        .map_err(|e| format!("Failed to update metadata name: {}", e))?;
+                }
+            }
+        }
+    }
+
+    // Note: If the vault is NOT loaded, we initiate a quick DB connection just to update the metadata?
+    // Or we just accept that metadata in SQL is updated on next load?
+    // User requirement "sync compatibility" implies SQL should be correct.
+    // However, if the vault isn't loaded, we can't easily access its DB without repeating `init_db` logic.
+    // For now, let's update SQL if loaded. If not loaded, `load_vault` (step 1b + 7) will update metadata on next open.
+    // Wait, `load_vault` step 7 pushes JSON state to SQL. So yes, updating JSON `rename_vault` is sufficient
+    // because `load_vault` will propagate it to SQL next time it's opened.
+    // BUT if we want "background sync" to work without opening, we might need to open DB here.
+    // Let's stick to: Update loaded state if active, otherwise next load handles it.
 
     Ok(())
 }
@@ -472,6 +535,7 @@ async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPubl
             id: c.id.clone(),
             name: c.name.clone(),
             bucket: c.bucket.clone(),
+            visits: c.visits,
         })),
         None => Ok(None),
     }
@@ -875,7 +939,8 @@ pub fn run() {
             initialize_upload_manager,
             open_cache_folder,
             get_audio,
-            get_supported_extensions
+            get_supported_extensions,
+            rename_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

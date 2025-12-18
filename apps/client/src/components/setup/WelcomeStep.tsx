@@ -1,10 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { IconPlus, IconDownload, IconLock, IconChevronRight, IconLoader, IconScan } from "@tabler/icons-react";
+import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
-import { getVaults, loadVault, type VaultPublic } from "@/lib/vault";
+import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
 import { useNavigate } from "@tanstack/react-router";
+import { VaultCard } from "@/components/vault/VaultCard";
+import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
@@ -19,13 +20,28 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
   const [vaults, setVaults] = useState<VaultPublic[]>([]);
   const [loading, setLoading] = useState(true);
   const [openLoading, setOpenLoading] = useState<string | null>(null);
+  const [renameId, setRenameId] = useState<string | null>(null);
 
   useEffect(() => {
+    fetchVaults();
+  }, []);
+
+  const fetchVaults = () => {
     getVaults()
       .then(setVaults)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  const handleRename = async (newName: string) => {
+    if (!renameId) return;
+    try {
+      await renameVault(renameId, newName);
+      fetchVaults(); // Refresh list to see new name
+    } catch (e) {
+      console.error("Failed to rename vault:", e);
+    }
+  };
 
   const handleOpenVault = async (id: string) => {
     setOpenLoading(id);
@@ -37,8 +53,6 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
       setOpenLoading(null);
     }
   };
-
-  const visibleVaults = vaults.slice(0, MAX_VISIBLE_VAULTS);
 
   return (
     <div className="flex flex-col items-center justify-center p-6">
@@ -66,41 +80,69 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
                     <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
                       {t("setup.welcome.openVault")}
                     </p>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-5 h-5 text-muted-foreground hover:text-foreground"
-                      onClick={() => navigate({ to: "/vaults" })}
-                    >
-                      <IconChevronRight className="w-4 h-4" />
-                    </Button>
+                    {/* Only show 'See all' arrow if we are clamping the list */}
+                    {vaults.length > MAX_VISIBLE_VAULTS && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-5 h-5 text-muted-foreground hover:text-foreground"
+                        onClick={() => navigate({ to: "/vaults" })}
+                      >
+                        <IconChevronRight className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                <ScrollArea className="max-h-[200px]">
+                <div className="relative">
                   <div className="grid grid-cols-2 gap-2">
-                    {visibleVaults.map((vault) => (
-                      <button
+                    {/* Show only the first MAX_VISIBLE_VAULTS items fully */}
+                    {vaults.slice(0, MAX_VISIBLE_VAULTS).map((vault) => (
+                      <VaultCard
                         key={vault.id}
-                        onClick={() => handleOpenVault(vault.id)}
-                        disabled={!!openLoading}
-                        className="flex items-center gap-3 p-3 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all text-left w-full group"
-                      >
-                        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
-                          {openLoading === vault.id ? (
-                            <IconLoader className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <IconLock className="w-4 h-4" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{vault.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{vault.bucket}</p>
-                        </div>
-                      </button>
+                        vault={vault}
+                        openLoading={openLoading}
+                        onOpen={handleOpenVault}
+                        hideMenu
+                        hideBucket
+                        showChevron
+                      />
                     ))}
+
+                    {/* Render extra items if they exist to create the 'behind' effect, but cover them with gradient */}
+                    {vaults.length > MAX_VISIBLE_VAULTS && (
+                      <>
+                        {/* Render 2 more items to show 'more' exists */}
+                        {vaults.slice(MAX_VISIBLE_VAULTS, MAX_VISIBLE_VAULTS + 2).map((vault) => (
+                          <div key={vault.id} className="opacity-40 pointer-events-none grayscale">
+                            <VaultCard
+                              vault={vault}
+                              openLoading={null}
+                              onOpen={() => { }}
+                              hideMenu
+                              hideBucket
+                              showChevron
+                            />
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
-                </ScrollArea>
+
+                  {/* Gradient Overlay & Button if more vaults exist */}
+                  {vaults.length > MAX_VISIBLE_VAULTS && (
+                    <div className="absolute inset-x-0 -bottom-4 h-24 bg-gradient-to-t from-background via-background/80 to-transparent flex items-center justify-center">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="shadow-sm z-10 font-medium"
+                        onClick={() => navigate({ to: "/vaults" })}
+                      >
+                        View more vaults
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -145,6 +187,14 @@ export function WelcomeStep({ onCreateVault, onImportVault }: WelcomeStepProps) 
           </div>
         )}
       </div>
-    </div>
+
+
+      <RenameVaultDialog
+        open={!!renameId}
+        onOpenChange={(open) => !open && setRenameId(null)}
+        vaultName={vaults.find(v => v.id === renameId)?.name || ""}
+        onConfirm={handleRename}
+      />
+    </div >
   );
 }
