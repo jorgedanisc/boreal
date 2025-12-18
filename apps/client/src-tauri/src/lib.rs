@@ -1,9 +1,11 @@
 mod cache;
 mod crypto;
 mod db;
+mod exif_extractor;
 mod file_filter;
 mod image_processing;
 mod media_processor;
+mod pairing;
 mod storage;
 mod upload_manager;
 mod vault;
@@ -31,6 +33,10 @@ struct CacheState {
 
 struct UploadManagerState {
     manager: Mutex<Option<UploadManager>>,
+}
+
+struct PairingManagerState {
+    manager: Arc<Mutex<Option<pairing::PairingManager>>>,
 }
 
 // Commands
@@ -302,10 +308,13 @@ struct Photo {
     id: String,
     filename: String,
     created_at: String,
+    captured_at: Option<String>,
     tier: String,
     media_type: String,
     width: u32,
     height: u32,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
 }
 
 #[tauri::command]
@@ -314,7 +323,7 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
     let conn = db_guard.as_ref().ok_or("DB not initialized")?;
 
     let mut stmt = conn
-        .prepare("SELECT id, filename, created_at, tier, media_type, width, height FROM photos ORDER BY created_at DESC")
+        .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
         .map_err(|e| e.to_string())?;
 
     let photos = stmt
@@ -323,12 +332,15 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
                 id: row.get(0)?,
                 filename: row.get(1)?,
                 created_at: row.get(2)?,
-                tier: row.get(3)?,
+                captured_at: row.get(3)?,
+                tier: row.get(4)?,
                 media_type: row
-                    .get::<_, Option<String>>(4)?
+                    .get::<_, Option<String>>(5)?
                     .unwrap_or_else(|| "image".to_string()),
-                width: row.get::<_, Option<u32>>(5)?.unwrap_or(0),
-                height: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                width: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                height: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+                latitude: row.get(8)?,
+                longitude: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -888,6 +900,136 @@ fn get_supported_extensions() -> file_filter::MediaExtensions {
     file_filter::get_supported_extensions()
 }
 
+// ============ Pairing Commands ============
+
+#[tauri::command]
+async fn start_pairing_mode(pairing_state: State<'_, PairingManagerState>) -> Result<(), String> {
+    let mut guard = pairing_state.manager.lock().await;
+
+    // Get device name (could be from config, using hostname for now)
+    let device_name = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Boreal Device".to_string());
+
+    let manager = pairing::PairingManager::new(device_name);
+    manager.start_listening().await.map_err(|e| e.to_string())?;
+    *guard = Some(manager);
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_pairing_mode(pairing_state: State<'_, PairingManagerState>) -> Result<(), String> {
+    let mut guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.take() {
+        manager.stop_listening().await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn confirm_pairing(pairing_state: State<'_, PairingManagerState>) -> Result<(), String> {
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        manager.confirm_pairing().await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_pairing_status(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<pairing::PairingStatus, String> {
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        Ok(manager.get_status().await)
+    } else {
+        Ok(pairing::PairingStatus::default())
+    }
+}
+
+#[tauri::command]
+async fn get_received_vault_config(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<Option<String>, String> {
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        Ok(manager.get_received_vault_config().await)
+    } else {
+        Ok(None)
+    }
+}
+
+// Sender (discovery) commands
+
+#[tauri::command]
+async fn start_network_discovery(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<(), String> {
+    let mut guard = pairing_state.manager.lock().await;
+
+    let device_name = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Boreal Device".to_string());
+
+    let manager = pairing::PairingManager::new(device_name);
+    manager.start_discovery().await.map_err(|e| e.to_string())?;
+    *guard = Some(manager);
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_network_discovery(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<(), String> {
+    let mut guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.take() {
+        manager.stop_discovery().await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_discovered_devices(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<Vec<pairing::DiscoveredDevice>, String> {
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        Ok(manager.get_discovered_devices().await)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+async fn initiate_pairing(
+    app: AppHandle,
+    pairing_state: State<'_, PairingManagerState>,
+    device_id: String,
+    vault_id: String,
+) -> Result<(), String> {
+    // Get vault config
+    let config = store::load_vault(&app, &vault_id)?;
+    let vault_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        let devices = manager.get_discovered_devices().await;
+        let device = devices
+            .iter()
+            .find(|d| d.id == device_id)
+            .ok_or("Device not found")?
+            .clone();
+
+        manager
+            .initiate_pairing(&device, vault_json)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err("Pairing manager not initialized".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri::menu::{Menu, MenuItem, Submenu};
@@ -939,6 +1081,9 @@ pub fn run() {
         .manage(CacheState {
             thumbnail_cache: Arc::new(Mutex::new(None)),
         })
+        .manage(PairingManagerState {
+            manager: Arc::new(Mutex::new(None)),
+        })
         .invoke_handler(tauri::generate_handler![
             import_vault,
             bootstrap_vault,
@@ -968,7 +1113,17 @@ pub fn run() {
             open_cache_folder,
             get_audio,
             get_supported_extensions,
-            rename_vault
+            rename_vault,
+            // Pairing commands
+            start_pairing_mode,
+            stop_pairing_mode,
+            confirm_pairing,
+            get_pairing_status,
+            get_received_vault_config,
+            start_network_discovery,
+            stop_network_discovery,
+            get_discovered_devices,
+            initiate_pairing
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

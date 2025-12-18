@@ -196,7 +196,7 @@ export function QrScannerPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex flex-col">
       {/* Header */}
       <header className="p-4 flex items-center gap-4 border-b">
         <Button variant="ghost" size="icon" onClick={handleBack}>

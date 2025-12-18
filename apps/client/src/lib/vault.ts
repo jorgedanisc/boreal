@@ -102,11 +102,14 @@ export interface Photo {
   id: string;
   filename: string;
   created_at: string;
+  captured_at?: string;
   tier: string;
   width: number;
   height: number;
   s3_key: string;
   media_type: 'image' | 'video' | 'audio';
+  latitude?: number;
+  longitude?: number;
 }
 
 export async function getPhotos(): Promise<Photo[]> {

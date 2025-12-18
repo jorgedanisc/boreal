@@ -8,12 +8,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { createExportQr, exportVault, authenticateBiometrics } from "@/lib/vault";
-import { IconCheck, IconCopy, IconPrinter, IconQrcode } from "@tabler/icons-react";
+import { IconCheck, IconCopy, IconPrinter, IconQrcode, IconWifi } from "@tabler/icons-react";
 import { useState } from "react";
 import QRCode from "react-qr-code";
 import { RecoveryKit } from "./RecoveryKit";
 import { Spinner } from "@/components/ui/spinner";
 import { PrintPortal } from "@/components/ui/print-portal";
+import { NetworkShareDialog } from "./NetworkShareDialog";
 
 interface ShareVaultDialogProps {
   vaultId: string;
@@ -30,6 +31,7 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
   const [printing, setPrinting] = useState(false);
 
   const [copied, setCopied] = useState(false);
+  const [showNetworkShare, setShowNetworkShare] = useState(false);
 
   const generateCode = async () => {
     setLoading(true);
@@ -117,7 +119,7 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
             {loading ? (
               <div className="flex flex-col items-center gap-2">
                 <Spinner className="w-8 h-8 text-primary" />
-                <p className="text-sm text-gray-500">Generating secure credentials...</p>
+                <p className="text-sm text-muted-foreground">Generating secure credentials...</p>
               </div>
             ) : exportData ? (
               <>
@@ -132,9 +134,9 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
 
                 {/* Constrain width to match QR Code (approx 200px + padding) */}
                 <div className="w-[240px] space-y-6">
-                  <div className="bg-gray-50 p-4 rounded-lg border text-center space-y-1">
-                    <p className="text-xs uppercase text-gray-500 font-semibold tracking-wider">Pairing PIN</p>
-                    <p className="text-3xl font-mono font-bold tracking-[0.2em] text-gray-900">
+                  <div className="bg-muted/50 p-4 rounded-lg border text-center space-y-1">
+                    <p className="text-xs uppercase text-muted-foreground font-semibold tracking-wider">Pairing PIN</p>
+                    <p className="text-3xl font-mono font-bold tracking-[0.2em] text-foreground">
                       {exportData.pin}
                     </p>
                   </div>
@@ -152,6 +154,15 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
                     <Button
                       variant="outline"
                       className="w-full gap-2"
+                      onClick={() => setShowNetworkShare(true)}
+                    >
+                      <IconWifi className="w-4 h-4" />
+                      Share Over Network
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className="w-full gap-2"
                       onClick={handleCopy}
                     >
                       {copied ? <IconCheck className="w-4 h-4" /> : <IconCopy className="w-4 h-4" />}
@@ -161,14 +172,14 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
                     <div className="space-y-2">
                       <Button
                         variant="secondary"
-                        className="w-full gap-2 bg-amber-50 text-amber-900 hover:bg-amber-100 border-amber-200 border"
+                        className="w-full gap-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border-amber-200/50 dark:border-amber-800/50 border"
                         onClick={handlePrint}
                         disabled={printing}
                       >
                         {printing ? <Spinner className="w-4 h-4" /> : <IconPrinter className="w-4 h-4" />}
                         Print Recovery Kit
                       </Button>
-                      <p className="text-[10px] text-center text-gray-400 leading-tight px-1">
+                      <p className="text-[10px] text-center text-muted-foreground/60 leading-tight px-1">
                         Only download if absolutely necessary. Contains sensitive recovery data.
                       </p>
                     </div>
@@ -193,6 +204,13 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
           </PrintPortal>
         )
       }
+
+      {/* Network Share Dialog */}
+      <NetworkShareDialog
+        open={showNetworkShare}
+        onOpenChange={setShowNetworkShare}
+        vaultId={vaultId}
+      />
     </>
   );
 }

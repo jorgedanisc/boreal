@@ -1,17 +1,20 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan, IconWifi } from "@tabler/icons-react";
+import { useEffect, useState, useMemo } from "react";
 import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
 import { useNavigate } from "@tanstack/react-router";
 import { VaultCard } from "@/components/vault/VaultCard";
 import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
+import Aurora from "@/components/ui/aurora";
+import { getDailyQuote } from "@/lib/quotes";
+import { ScanQrCodeIcon } from "lucide-react";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
 }
 
-const MAX_VISIBLE_VAULTS = 4;
+const MAX_VISIBLE_VAULTS = 8;
 
 export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
   const { t } = useTranslation();
@@ -20,6 +23,9 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
   const [loading, setLoading] = useState(true);
   const [openLoading, setOpenLoading] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
+
+  // Get deterministic daily quote
+  const dailyQuote = useMemo(() => getDailyQuote(), []);
 
   useEffect(() => {
     fetchVaults();
@@ -54,16 +60,26 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-lg space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-br from-foreground to-muted-foreground bg-clip-text text-transparent">
-            {t("app.name")}
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            {t("setup.welcome.subtitle")}
-          </p>
-        </div>
+    <div className="flex flex-col items-center justify-center p-6 relative">
+      {/* Aurora Background */}
+      <div className="fixed inset-x-0 -top-8 h-64 overflow-hidden pointer-events-none opacity-25">
+        <Aurora
+          colorStops={["#2AEFB6", "#0B7BF5", "#5F03BD"]}
+          blend={1.5}
+          amplitude={0.7}
+          speed={0.35}
+        />
+      </div>
+
+      <div className="w-full max-w-lg space-y-8 animate-in fade-in duration-300 mt-10 relative z-10">
+        {/* <div className="text-center max-w-sm mx-auto opacity-40">
+          <blockquote className="text-sm font-medium italic text-foreground/90 leading-relaxed">
+            "{dailyQuote.quote}"
+            <p className="text-xs text-muted-foreground">
+              — {dailyQuote.author}
+            </p>
+          </blockquote>
+        </div> */}
 
         {loading ? (
           <div className="flex justify-center p-8">
@@ -130,7 +146,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
 
                   {/* Gradient Overlay & Button if more vaults exist */}
                   {vaults.length > MAX_VISIBLE_VAULTS && (
-                    <div className="absolute inset-x-0 -bottom-4 h-24 bg-gradient-to-t from-background via-background/80 to-transparent flex items-center justify-center">
+                    <div className="absolute inset-x-0 -bottom-8 h-24 bg-gradient-to-t from-background via-background/80 to-transparent flex items-center justify-center">
                       <Button
                         variant="secondary"
                         size="sm"
@@ -153,10 +169,10 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 </p>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <Button
                   variant="outline"
-                  className="h-auto py-6 flex flex-col gap-2 hover:border-primary/50 hover:bg-muted/50"
+                  className="h-auto py-6 flex flex-col gap-2"
                   onClick={onCreateVault}
                 >
                   <IconPlus className="w-6 h-6" />
@@ -165,11 +181,20 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
 
                 <Button
                   variant="outline"
-                  className="h-auto py-6 flex flex-col gap-2 hover:border-primary/50 hover:bg-muted/50"
+                  className="h-auto py-6 flex flex-col gap-2"
                   onClick={() => navigate({ to: "/scan" })}
                 >
-                  <IconScan className="w-6 h-6" />
+                  <ScanQrCodeIcon className="w-6 h-6" />
                   <span className="font-medium">Scan QR</span>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  className="h-auto py-6 flex flex-col gap-2"
+                  onClick={() => navigate({ to: "/pairing" })}
+                >
+                  <IconWifi className="w-6 h-6" />
+                  <span className="font-medium">Pair Device</span>
                 </Button>
               </div>
 

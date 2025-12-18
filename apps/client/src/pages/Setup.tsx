@@ -25,7 +25,7 @@ export default function Setup() {
     };
 
     return (
-        <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center p-4">
+        <div className="text-foreground flex flex-col items-center justify-center p-4">
             <div className="w-full max-w-md space-y-8">
                 <div className="text-center space-y-2">
                     <div className="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6">

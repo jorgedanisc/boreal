@@ -76,11 +76,44 @@ async function initMenuListeners() {
   });
 }
 
+// Initialize splash removal with staged transition (2s max)
+async function initSplash() {
+  // Wait 1.0s for reveal animation to stabilize
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  const splashBg = document.getElementById('splash-bg');
+  const splash = document.getElementById('splash');
+
+  // Stage 1: Fade out the image wrapper (0.3s transition)
+  // This ensures the image is gone before we reveal the content
+  if (splash) {
+    splash.style.opacity = '0';
+  }
+
+  // Wait for image fade to complete
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Stage 2: Fade out the background layer (0.5s transition)
+  // This smoothly reveals the app content underneath
+  if (splashBg) {
+    splashBg.style.opacity = '0';
+  }
+
+  // Stage 3: Wait for background fade to complete, then remove elements
+  await new Promise(resolve => setTimeout(resolve, 500));
+  splash?.remove();
+  splashBg?.remove();
+  document.body.classList.remove('splash-lock'); // Restore scrolling capabilities
+}
+
 // Start deep link handling
 initDeepLinks();
 
 // Start menu listeners
 initMenuListeners();
+
+// Start splash removal (can run in parallel with app boot)
+initSplash();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

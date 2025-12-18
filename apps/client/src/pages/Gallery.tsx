@@ -5,19 +5,22 @@ import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { useUploadStore } from '@/stores/upload_store';
 import { useNavigate } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, Image as ImageIcon, TextCursorInputIcon } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, Image as ImageIcon, Sparkles, Map as MapIcon, Upload as UploadIcon, Share as ShareIcon, TextCursorInputIcon } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
 import { getActiveVault, getPhotos, getThumbnail, Photo, renameVault, VaultPublic } from '../lib/vault';
 
 // Custom Gallery Components
 import { AudioPlayer } from '@/components/gallery/AudioPlayer';
-import { MasonryGrid, MediaItem } from '@/components/gallery/MasonryGrid';
+import { VirtualizedMasonryGrid, MediaItem, LayoutItem } from '@/components/gallery/MasonryGrid';
+import { groupPhotosByDate } from '@/components/gallery/TimelineScrubber';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 
 // Lightbox
 import Lightbox from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import "yet-another-react-lightbox/styles.css";
+import { type } from '@tauri-apps/plugin-os';
 
 export default function Gallery() {
   const navigate = useNavigate();
@@ -27,6 +30,9 @@ export default function Gallery() {
   const { getCompletedCount } = useUploadStore();
   const [lastCompletedCount, setLastCompletedCount] = useState(0);
 
+  // View Mode State
+  const [viewMode, setViewMode] = useState<'memories' | 'library' | 'map'>('library');
+
   // Lightbox State
   const [lightboxIndex, setLightboxIndex] = useState(-1);
 
@@ -35,6 +41,21 @@ export default function Gallery() {
 
   // Rename State
   const [renameOpen, setRenameOpen] = useState(false);
+
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  // Scroll & Layout State
+  const [currentScrollY, setCurrentScrollY] = useState(0);
+  const [totalGridHeight, setTotalGridHeight] = useState(0);
+  const [itemOffsets, setItemOffsets] = useState<number[]>([]);
+  const [activeDateLabel, setActiveDateLabel] = useState<string>('');
+
+  useEffect(() => {
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+  }, []);
 
   // Initialize upload manager when vault is loaded
   useEffect(() => {
@@ -55,7 +76,7 @@ export default function Gallery() {
       const list = await getPhotos();
       setPhotos(list);
 
-      // Load thumbnails lazily (skip audio - no thumbnails)
+      // Load thumbnails
       const BATCH_SIZE = 10;
       const imageVideoPhotos = list.filter(p => (p.media_type || 'image') !== 'audio');
 
@@ -90,23 +111,89 @@ export default function Gallery() {
     }
   }, [completedCount, lastCompletedCount]);
 
-  // Map photos to MediaItem format for MasonryGrid
-  // Pass through actual dimensions - MasonryGrid handles missing values
+  // Media Items
   const mediaItems: MediaItem[] = useMemo(() => {
     return photos.map(p => {
       const mediaType = (p.media_type || 'image') as 'image' | 'video' | 'audio';
       return {
         id: p.id,
         src: thumbnails[p.id] || '',
-        width: p.width,  // Pass actual value, even if 0
-        height: p.height, // Pass actual value, even if 0
+        width: p.width,
+        height: p.height,
         alt: p.filename,
         mediaType,
+        capturedAt: p.captured_at || p.created_at,
       };
     });
   }, [photos, thumbnails]);
 
-  // Lightbox slides (for images/videos only)
+  // Date Grouping
+  const timelineDates = useMemo(() => {
+    const photosWithDates = photos.map(p => ({
+      capturedAt: p.captured_at,
+      createdAt: p.created_at,
+    }));
+
+    const getItemOffset = (index: number) => {
+      // Use the computed layout offset if available, otherwise a rough estimate
+      return itemOffsets[index] || index * 200;
+    };
+
+    return groupPhotosByDate(photosWithDates, getItemOffset);
+  }, [photos, itemOffsets]);
+
+  // Handle Scroll to update active date
+  useEffect(() => {
+    if (photos.length === 0) {
+      setActiveDateLabel('');
+      return;
+    }
+
+    // Find the photo that is currently in view based on scroll position
+    // Get the index of the photo closest to the current scroll position
+    let closestIndex = 0;
+    let minDistance = Infinity;
+    for (let i = 0; i < itemOffsets.length; i++) {
+      const distance = Math.abs(itemOffsets[i] - currentScrollY);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+
+    // Format date as "21 Dec 2025"
+    const photo = photos[closestIndex];
+    const dateStr = photo?.captured_at || photo?.created_at;
+    if (dateStr) {
+      try {
+        const date = new Date(dateStr);
+        const formatted = date.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
+        setActiveDateLabel(formatted);
+      } catch {
+        setActiveDateLabel('');
+      }
+    }
+  }, [currentScrollY, photos, itemOffsets]);
+
+  // Handle Layout Computation from MasonryGrid
+  const handleLayoutComputed = useCallback((layout: LayoutItem[]) => {
+    const offsets = new Array(layout.length).fill(0);
+    layout.forEach(item => {
+      offsets[item.globalIndex] = item.y;
+    });
+    setItemOffsets(offsets);
+  }, []);
+
+  const handleScrollPositionChange = useCallback((offsetY: number, totalHeight: number) => {
+    setCurrentScrollY(offsetY);
+    setTotalGridHeight(totalHeight);
+  }, []);
+
+  // Slides for lightbox
   const slides = useMemo(() => {
     return photos
       .filter(p => (p.media_type || 'image') !== 'audio')
@@ -116,59 +203,96 @@ export default function Gallery() {
       }));
   }, [photos, thumbnails]);
 
-  // Handle item click
   const handleItemClick = (index: number) => {
     const photo = photos[index];
     const mediaType = photo?.media_type || 'image';
 
     if (mediaType === 'audio') {
-      // Open audio player
       setAudioPlayer({ id: photo.id, filename: photo.filename });
     } else {
-      // Open lightbox - find index in filtered slides
       const filteredPhotos = photos.filter(p => (p.media_type || 'image') !== 'audio');
       const lightboxIdx = filteredPhotos.findIndex(p => p.id === photo.id);
       setLightboxIndex(lightboxIdx);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <header className="sticky top-0 z-20 bg-background/80 backdrop-blur-md border-b border-border p-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate({ to: "/" })}
-            className="shrink-0"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
+  // Grid spacing constant for consistent padding
+  const GRID_SPACING = 2;
 
-          <div className="group flex items-center gap-2 cursor-pointer" onClick={() => activeVault && setRenameOpen(true)}>
-            <div>
-              <h1 className="text-lg font-semibold leading-tight flex items-center gap-2">
-                {activeVault?.name || "Photos"}
-                <TextCursorInputIcon className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
-              </h1>
-              {activeVault && (
-                <p className="text-xs text-muted-foreground truncate max-w-[150px]">
-                  {activeVault.bucket}
-                </p>
-              )}
+  return (
+    <div className="text-foreground flex flex-col h-screen bg-background relative overflow-hidden">
+      {/* Header - gradient fade overlay */}
+      <header
+        className="fixed top-0 left-0 right-0 z-30 pointer-events-none"
+        style={{
+          paddingTop: isDesktop ? "32px" : "0px",
+        }}
+      >
+        {/* Gradient background for fade effect */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(to bottom, oklch(18.971% 0.00816 296.997) 0%, oklch(18.971% 0.00816 296.997 / 0.9) 50%, oklch(18.971% 0.00816 296.997 / 0) 100%)',
+          }}
+        />
+        <div className="relative flex items-start justify-between p-4 pointer-events-auto">
+          {/* Top Left: Chevron + Title row, Date below */}
+          <div className="flex flex-col">
+            {/* Row with Chevron + Title */}
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigate({ to: "/" })}
+                className="shrink-0 -ml-2 h-8 w-8"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </Button>
+              <div
+                className="group flex items-center gap-2 cursor-pointer"
+                onClick={() => activeVault && setRenameOpen(true)}
+              >
+                <h1 className="text-xl font-bold tracking-tight">
+                  {activeVault?.name || "Photos"}
+                </h1>
+              </div>
             </div>
+            {/* Date below the chevron */}
+            <p className="text-sm font-medium text-muted-foreground/70 ml-7">
+              {activeDateLabel || "Timeline"}
+            </p>
+          </div>
+
+          {/* Top Right: Actions */}
+          <div className="flex items-center gap-3">
+            {activeVault && (
+              <ShareVaultDialog
+                vaultId={activeVault.id}
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full w-10 h-10 hover:bg-white/10"
+                  >
+                    <ShareIcon className="w-5 h-5 text-foreground" />
+                  </Button>
+                }
+              />
+            )}
+
+            <UploadTrigger>
+              <Button className="rounded-full px-5 font-semibold bg-secondary/60 text-secondary-foreground hover:bg-secondary/90 transition-colors backdrop-blur-2xl border border-white/10 shadow-2xl">
+                Upload
+              </Button>
+            </UploadTrigger>
           </div>
         </div>
+      </header>
 
-        <div className="flex items-center gap-2">
-          {activeVault && <ShareVaultDialog vaultId={activeVault.id} />}
-          <UploadTrigger />
-        </div>
-      </header >
-
-      <main className="flex-1 p-2">
+      {/* Main Content - grid fills entire screen, content scrolls under header */}
+      <main className="absolute inset-0">
         {photos.length === 0 ? (
-          <div className="h-[50vh] flex flex-col items-center justify-center text-muted-foreground space-y-4">
+          <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
               <ImageIcon className="w-8 h-8" />
             </div>
@@ -176,16 +300,52 @@ export default function Gallery() {
             <UploadTrigger />
           </div>
         ) : (
-          <MasonryGrid
+          <VirtualizedMasonryGrid
             items={mediaItems}
             columns={4}
-            spacing={4}
+            spacing={GRID_SPACING}
+            paddingTop={isDesktop ? 120 : 100}
+            paddingBottom={100}
             onItemClick={handleItemClick}
+            onScrollPositionChange={handleScrollPositionChange}
+            onLayoutComputed={handleLayoutComputed}
           />
         )}
       </main>
 
-      {/* Lightbox for images/videos */}
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-auto min-w-[280px] max-w-[90vw]">
+        <div
+          className="backdrop-blur-2xl border border-white/10 shadow-2xl rounded-full p-1.5 h-14 bg-secondary/60"
+        >
+          <SegmentedControl
+            value={viewMode}
+            onChange={(v) => {
+              setViewMode(v as any);
+              // Navigation logic could go here
+            }}
+            items={[
+              {
+                value: 'memories',
+                label: 'Memories',
+                icon: <Sparkles className="w-5 h-5 mb-0.5" />
+              },
+              {
+                value: 'library',
+                label: 'Library',
+                icon: <ImageIcon className="w-5 h-5 mb-0.5" />
+              },
+              {
+                value: 'map',
+                label: 'Map',
+                icon: <MapIcon className="w-5 h-5 mb-0.5" />
+              },
+            ]}
+          />
+        </div>
+      </div>
+
+      {/* Global Components */}
       <Lightbox
         open={lightboxIndex >= 0}
         index={lightboxIndex}
@@ -194,7 +354,6 @@ export default function Gallery() {
         plugins={[Zoom]}
       />
 
-      {/* Audio Player Modal */}
       <AudioPlayer
         isOpen={!!audioPlayer}
         onClose={() => setAudioPlayer(null)}
@@ -202,10 +361,11 @@ export default function Gallery() {
         filename={audioPlayer?.filename || ''}
       />
 
-      {/* Upload Panel - Fixed at Bottom Center */}
-      <MultipleFileUploader />
+      {/* Invisible Uploader for handling file drops/selection */}
+      <div className="hidden">
+        <MultipleFileUploader />
+      </div>
 
-      {/* Header Rename Dialog */}
       <RenameVaultDialog
         open={renameOpen}
         onOpenChange={setRenameOpen}
@@ -217,6 +377,6 @@ export default function Gallery() {
           }
         }}
       />
-    </div >
+    </div>
   );
 }

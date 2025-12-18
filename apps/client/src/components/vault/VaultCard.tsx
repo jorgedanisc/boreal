@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { IconChevronRight, IconDotsVertical, IconLoader, IconLock } from "@tabler/icons-react";
-import { TextCursorInputIcon } from "lucide-react";
+import { TextCursorInputIcon, VaultIcon } from "lucide-react";
 
 interface VaultCardProps {
   vault: any;
@@ -44,7 +44,7 @@ export function VaultCard({
           {openLoading === vault.id ? (
             <IconLoader className="w-4 h-4 animate-spin" />
           ) : (
-            <IconLock className="w-4 h-4" />
+            <VaultIcon className="w-4 h-4" />
           )}
         </div>
         <div className="flex-1 min-w-0">

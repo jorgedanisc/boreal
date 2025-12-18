@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "boreal",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "",
+        "width": 850,
+        "height": 700,
+        "titleBarStyle": "Overlay"
       }
     ],
     "security": {

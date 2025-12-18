@@ -27,6 +27,16 @@ pub fn init_db(path: &Path) -> Result<Connection> {
     )
     .ok(); // Ignore error if column already exists
 
+    // Migration: Add captured_at for actual photo capture date (from EXIF)
+    conn.execute("ALTER TABLE photos ADD COLUMN captured_at TEXT", [])
+        .ok();
+
+    // Migration: Add GPS coordinates
+    conn.execute("ALTER TABLE photos ADD COLUMN latitude REAL", [])
+        .ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN longitude REAL", [])
+        .ok();
+
     // Migration: Create metadata table for syncing vault properties (visits, name, etc.)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS metadata (

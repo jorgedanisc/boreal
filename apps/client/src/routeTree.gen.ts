@@ -15,6 +15,7 @@ import { Route as rootRouteImport } from './routes/__root'
 const VaultsLazyRouteImport = createFileRoute('/vaults')()
 const SetupLazyRouteImport = createFileRoute('/setup')()
 const ScanLazyRouteImport = createFileRoute('/scan')()
+const PairingLazyRouteImport = createFileRoute('/pairing')()
 const ImportLazyRouteImport = createFileRoute('/import')()
 const GalleryLazyRouteImport = createFileRoute('/gallery')()
 const IndexLazyRouteImport = createFileRoute('/')()
@@ -34,6 +35,11 @@ const ScanLazyRoute = ScanLazyRouteImport.update({
   path: '/scan',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/scan.lazy').then((d) => d.Route))
+const PairingLazyRoute = PairingLazyRouteImport.update({
+  id: '/pairing',
+  path: '/pairing',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/pairing.lazy').then((d) => d.Route))
 const ImportLazyRoute = ImportLazyRouteImport.update({
   id: '/import',
   path: '/import',
@@ -54,6 +60,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexLazyRoute
   '/gallery': typeof GalleryLazyRoute
   '/import': typeof ImportLazyRoute
+  '/pairing': typeof PairingLazyRoute
   '/scan': typeof ScanLazyRoute
   '/setup': typeof SetupLazyRoute
   '/vaults': typeof VaultsLazyRoute
@@ -62,6 +69,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexLazyRoute
   '/gallery': typeof GalleryLazyRoute
   '/import': typeof ImportLazyRoute
+  '/pairing': typeof PairingLazyRoute
   '/scan': typeof ScanLazyRoute
   '/setup': typeof SetupLazyRoute
   '/vaults': typeof VaultsLazyRoute
@@ -71,22 +79,39 @@ export interface FileRoutesById {
   '/': typeof IndexLazyRoute
   '/gallery': typeof GalleryLazyRoute
   '/import': typeof ImportLazyRoute
+  '/pairing': typeof PairingLazyRoute
   '/scan': typeof ScanLazyRoute
   '/setup': typeof SetupLazyRoute
   '/vaults': typeof VaultsLazyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/gallery' | '/import' | '/scan' | '/setup' | '/vaults'
+  fullPaths:
+    | '/'
+    | '/gallery'
+    | '/import'
+    | '/pairing'
+    | '/scan'
+    | '/setup'
+    | '/vaults'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/gallery' | '/import' | '/scan' | '/setup' | '/vaults'
-  id: '__root__' | '/' | '/gallery' | '/import' | '/scan' | '/setup' | '/vaults'
+  to: '/' | '/gallery' | '/import' | '/pairing' | '/scan' | '/setup' | '/vaults'
+  id:
+    | '__root__'
+    | '/'
+    | '/gallery'
+    | '/import'
+    | '/pairing'
+    | '/scan'
+    | '/setup'
+    | '/vaults'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexLazyRoute: typeof IndexLazyRoute
   GalleryLazyRoute: typeof GalleryLazyRoute
   ImportLazyRoute: typeof ImportLazyRoute
+  PairingLazyRoute: typeof PairingLazyRoute
   ScanLazyRoute: typeof ScanLazyRoute
   SetupLazyRoute: typeof SetupLazyRoute
   VaultsLazyRoute: typeof VaultsLazyRoute
@@ -113,6 +138,13 @@ declare module '@tanstack/react-router' {
       path: '/scan'
       fullPath: '/scan'
       preLoaderRoute: typeof ScanLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pairing': {
+      id: '/pairing'
+      path: '/pairing'
+      fullPath: '/pairing'
+      preLoaderRoute: typeof PairingLazyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/import': {
@@ -143,6 +175,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexLazyRoute: IndexLazyRoute,
   GalleryLazyRoute: GalleryLazyRoute,
   ImportLazyRoute: ImportLazyRoute,
+  PairingLazyRoute: PairingLazyRoute,
   ScanLazyRoute: ScanLazyRoute,
   SetupLazyRoute: SetupLazyRoute,
   VaultsLazyRoute: VaultsLazyRoute,

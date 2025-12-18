@@ -1,4 +1,6 @@
+use crate::cache::ThumbnailCache;
 use crate::crypto;
+use crate::exif_extractor;
 use crate::file_filter::{self, MediaType};
 use crate::media_processor;
 use crate::storage::Storage;
@@ -14,8 +16,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::sleep;
-
-use crate::cache::ThumbnailCache;
 
 /// Constants for Fresh Upload auto-toggle behavior
 const FRESH_UPLOAD_FILE_THRESHOLD: usize = 1000;
@@ -87,7 +87,6 @@ pub struct QueueState {
     pub failed_count: usize,
     pub pending_count: usize,
 }
-
 
 pub struct UploadManager {
     queue: Arc<RwLock<HashMap<String, UploadItem>>>,
@@ -496,6 +495,23 @@ impl UploadManager {
 
         eprintln!("[Upload {}] Processing media...", id);
 
+        // Extract EXIF metadata (capture date, GPS) for images
+        let exif_metadata = if item.media_type == MediaType::Image {
+            let metadata = exif_extractor::extract_metadata(&item.path);
+            if metadata.has_data() {
+                eprintln!(
+                    "[Upload {}] EXIF: captured_at={:?}, lat={:?}, lon={:?}",
+                    id,
+                    metadata.captured_at.as_ref().map(|d| d.to_rfc3339()),
+                    metadata.latitude,
+                    metadata.longitude
+                );
+            }
+            Some(metadata)
+        } else {
+            None
+        };
+
         // Process based on media type
         let (
             original_key,
@@ -749,20 +765,32 @@ impl UploadManager {
             let db_guard = db.lock().await;
             if let Some(conn) = db_guard.as_ref() {
                 let tier = "Standard";
+
+                // Get EXIF metadata values
+                let captured_at = exif_metadata
+                    .as_ref()
+                    .and_then(|m| m.captured_at.as_ref())
+                    .map(|d| d.to_rfc3339());
+                let latitude = exif_metadata.as_ref().and_then(|m| m.latitude);
+                let longitude = exif_metadata.as_ref().and_then(|m| m.longitude);
+
                 conn.execute(
-                    "INSERT INTO photos (id, filename, width, height, created_at, size_bytes, s3_key, thumbnail_key, tier, media_type)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO photos (id, filename, width, height, created_at, captured_at, size_bytes, s3_key, thumbnail_key, tier, media_type, latitude, longitude)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     rusqlite::params![
                         id,
                         item.filename,
                         width,
                         height,
                         chrono::Utc::now().to_rfc3339(),
+                        captured_at,
                         original_size,
                         original_key,
                         thumbnail_key.as_deref().unwrap_or(""),
                         tier,
-                        media_type_str
+                        media_type_str,
+                        latitude,
+                        longitude
                     ],
                 ).context("Failed to insert into database")?;
                 eprintln!(
