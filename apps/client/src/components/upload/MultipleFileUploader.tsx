@@ -18,9 +18,9 @@ import {
   Upload as UploadIcon,
   X as XIcon,
   File as FileIcon,
-  Loader2,
-  Check,
-  AlertTriangle,
+  //   Loader2,
+  //   Check,
+  //   AlertTriangle,
   FlameKindling,
 } from "lucide-react";
 import { open } from '@tauri-apps/plugin-dialog';
@@ -56,8 +56,8 @@ export function MultipleFileUploader() {
     removeFile,
     clearFinished,
     getPendingCount,
-    getActiveCount,
-    getFailedCount,
+    // getActiveCount,
+    // getFailedCount,
     // getCompletedCount,
     // toggleFreshUpload,
     getOverallProgress,

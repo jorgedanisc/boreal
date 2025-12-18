@@ -6,7 +6,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { IconChevronRight, IconDotsVertical, IconLoader, IconLock } from "@tabler/icons-react";
+import { IconChevronRight, IconDotsVertical, IconLoader } from "@tabler/icons-react";
 import { TextCursorInputIcon, VaultIcon } from "lucide-react";
 
 interface VaultCardProps {

@@ -1,13 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan, IconWifi } from "@tabler/icons-react";
-import { useEffect, useState, useMemo } from "react";
+// import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconScan, IconWifi } from "@tabler/icons-react";
+import { IconPlus, IconDownload, IconChevronRight, IconLoader, IconWifi } from "@tabler/icons-react";
+import { useEffect, useState } from "react";
 import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
 import { useNavigate } from "@tanstack/react-router";
 import { VaultCard } from "@/components/vault/VaultCard";
 import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 import Aurora from "@/components/ui/aurora";
-import { getDailyQuote } from "@/lib/quotes";
+// import { getDailyQuote } from "@/lib/quotes";
 import { ScanQrCodeIcon } from "lucide-react";
 
 interface WelcomeStepProps {
@@ -25,7 +26,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
   const [renameId, setRenameId] = useState<string | null>(null);
 
   // Get deterministic daily quote
-  const dailyQuote = useMemo(() => getDailyQuote(), []);
+  // const dailyQuote = useMemo(() => getDailyQuote(), []);
 
   useEffect(() => {
     fetchVaults();

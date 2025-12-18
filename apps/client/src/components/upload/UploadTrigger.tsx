@@ -9,7 +9,7 @@ interface UploadTriggerProps {
  * UploadTrigger opens the MultipleFileUploader drawer.
  * Pass custom children to render a custom button, or use default.
  */
-export function UploadTrigger({ children, className = '' }: UploadTriggerProps) {
+export function UploadTrigger({ children, className: _className = '' }: UploadTriggerProps) {
   const handleClick = () => {
     window.dispatchEvent(new CustomEvent('open-upload-drawer'));
   };

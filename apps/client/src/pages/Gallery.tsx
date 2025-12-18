@@ -5,16 +5,15 @@ import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { useUploadStore } from '@/stores/upload_store';
 import { useNavigate } from '@tanstack/react-router';
 import { invoke } from '@tauri-apps/api/core';
-import { ChevronLeft, Image as ImageIcon, Sparkles, Map as MapIcon, Upload as UploadIcon, Share as ShareIcon, TextCursorInputIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, Image as ImageIcon, ShareIcon } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ShareVaultDialog } from '../components/vault/ShareVaultDialog';
 import { getActiveVault, getPhotos, getThumbnail, Photo, renameVault, VaultPublic } from '../lib/vault';
 
 // Custom Gallery Components
+import { GalleryBottomNav } from '@/components/GalleryBottomNav';
 import { AudioPlayer } from '@/components/gallery/AudioPlayer';
 import { VirtualizedMasonryGrid, MediaItem, LayoutItem } from '@/components/gallery/MasonryGrid';
-import { groupPhotosByDate } from '@/components/gallery/TimelineScrubber';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 
 // Lightbox
 import Lightbox from "yet-another-react-lightbox";
@@ -31,7 +30,7 @@ export default function Gallery() {
   const [lastCompletedCount, setLastCompletedCount] = useState(0);
 
   // View Mode State
-  const [viewMode, setViewMode] = useState<'memories' | 'library' | 'map'>('library');
+  //   const [viewMode, setViewMode] = useState<'memories' | 'library' | 'map'>('library');
 
   // Lightbox State
   const [lightboxIndex, setLightboxIndex] = useState(-1);
@@ -46,7 +45,7 @@ export default function Gallery() {
 
   // Scroll & Layout State
   const [currentScrollY, setCurrentScrollY] = useState(0);
-  const [totalGridHeight, setTotalGridHeight] = useState(0);
+  //   const [totalGridHeight, setTotalGridHeight] = useState(0);
   const [itemOffsets, setItemOffsets] = useState<number[]>([]);
   const [activeDateLabel, setActiveDateLabel] = useState<string>('');
 
@@ -128,19 +127,8 @@ export default function Gallery() {
   }, [photos, thumbnails]);
 
   // Date Grouping
-  const timelineDates = useMemo(() => {
-    const photosWithDates = photos.map(p => ({
-      capturedAt: p.captured_at,
-      createdAt: p.created_at,
-    }));
+  // const timelineDates = useMemo(() => {
 
-    const getItemOffset = (index: number) => {
-      // Use the computed layout offset if available, otherwise a rough estimate
-      return itemOffsets[index] || index * 200;
-    };
-
-    return groupPhotosByDate(photosWithDates, getItemOffset);
-  }, [photos, itemOffsets]);
 
   // Handle Scroll to update active date
   useEffect(() => {
@@ -188,9 +176,8 @@ export default function Gallery() {
     setItemOffsets(offsets);
   }, []);
 
-  const handleScrollPositionChange = useCallback((offsetY: number, totalHeight: number) => {
+  const handleScrollPositionChange = useCallback((offsetY: number, _totalHeight: number) => {
     setCurrentScrollY(offsetY);
-    setTotalGridHeight(totalHeight);
   }, []);
 
   // Slides for lightbox
@@ -269,11 +256,7 @@ export default function Gallery() {
               <ShareVaultDialog
                 vaultId={activeVault.id}
                 trigger={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-full w-10 h-10 hover:bg-white/10"
-                  >
+                  <Button variant="ghost" className="h-9 w-9 p-0 rounded-full bg-white/10 border-white/10 hover:bg-white/20 backdrop-blur-md">
                     <ShareIcon className="w-5 h-5 text-foreground" />
                   </Button>
                 }
@@ -313,37 +296,8 @@ export default function Gallery() {
         )}
       </main>
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-auto min-w-[280px] max-w-[90vw]">
-        <div
-          className="backdrop-blur-2xl border border-white/10 shadow-2xl rounded-full p-1.5 h-14 bg-secondary/60"
-        >
-          <SegmentedControl
-            value={viewMode}
-            onChange={(v) => {
-              setViewMode(v as any);
-              // Navigation logic could go here
-            }}
-            items={[
-              {
-                value: 'memories',
-                label: 'Memories',
-                icon: <Sparkles className="w-5 h-5 mb-0.5" />
-              },
-              {
-                value: 'library',
-                label: 'Library',
-                icon: <ImageIcon className="w-5 h-5 mb-0.5" />
-              },
-              {
-                value: 'map',
-                label: 'Map',
-                icon: <MapIcon className="w-5 h-5 mb-0.5" />
-              },
-            ]}
-          />
-        </div>
-      </div>
+      
+      <GalleryBottomNav currentView="gallery" />
 
       {/* Global Components */}
       <Lightbox
@@ -379,4 +333,5 @@ export default function Gallery() {
       />
     </div>
   );
+
 }

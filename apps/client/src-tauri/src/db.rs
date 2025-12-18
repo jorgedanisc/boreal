@@ -46,6 +46,32 @@ pub fn init_db(path: &Path) -> Result<Connection> {
         [],
     )?;
 
+    // Migration: Memories Feature
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            text_content TEXT,
+            date TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memory_media (
+            memory_id TEXT NOT NULL,
+            media_id TEXT NOT NULL,
+            display_order INTEGER NOT NULL,
+            PRIMARY KEY (memory_id, media_id),
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+            -- Note: We don't enforce FK on media_id loosely because media might be deleted separately
+            -- or we might want to keep the reference even if the file is gone (to show a placeholder)
+        )",
+        [],
+    )?;
+
     Ok(conn)
 }
 

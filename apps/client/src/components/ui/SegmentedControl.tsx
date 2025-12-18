@@ -194,8 +194,8 @@ export function SegmentedControl<T extends string | number>({
               onClick={() => !isDisabled && onChange(item.value)}
               disabled={isDisabled}
               className={cn(
-                "group flex flex-col items-center pb-0.5 pt-1.5 outline-none focus-visible:ring-2 focus-visible:ring-contrast/50 transition-all duration-200 ease-out rounded-full",
-                !isActive && !isDisabled && "hover:bg-core-gray-900",
+                "group flex flex-col items-center pb-0.5 pt-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 transition-all duration-200 ease-out rounded-full relative", // Removed z-index to maintain button interaction
+                !isActive && !isDisabled && "hover:bg-muted/50",
                 isDragging && "pointer-events-none",
                 !verbose ? "justify-center pt-0.5" : "justify-between",
                 isDisabled && "cursor-not-allowed opacity-50",
@@ -205,14 +205,14 @@ export function SegmentedControl<T extends string | number>({
               <span
                 className={cn(
                   "transition-colors duration-150",
-                  "pointer-events-none z-30",
+                  "pointer-events-none relative z-40",
                   isActive
-                    ? "text-contrast"
+                    ? "text-primary-foreground"
                     : isDragTarget
-                      ? "text-contrast/90"
+                      ? "text-primary-foreground/90"
                       : isDisabled
                         ? "opacity-50"
-                        : "text-core-gray-600 group-hover:text-core-gray-300"
+                        : "text-muted-foreground group-hover:text-foreground"
                 )}
               >
                 {item.icon}
@@ -223,14 +223,14 @@ export function SegmentedControl<T extends string | number>({
                   <span
                     className={cn(
                       "text-[10px] font-medium tracking-wide transition-colors duration-150",
-                      "pointer-events-none z-30",
+                      "pointer-events-none relative z-40",
                       isActive
-                        ? "text-contrast"
+                        ? "text-primary-foreground"
                         : isDragTarget
-                          ? "text-contrast/90"
+                          ? "text-primary-foreground/90"
                           : isDisabled
                             ? "opacity-50"
-                            : "text-core-gray-600 group-hover:text-core-gray-300"
+                            : "text-muted-foreground group-hover:text-foreground"
                     )}
                   >
                     {item.label}
@@ -276,7 +276,7 @@ export function SegmentedControl<T extends string | number>({
           }}
           className={cn(
             "absolute h-full top-0 left-0 z-20",
-            "border-core-gray-800 bg-core-gray-890 border-2",
+            "border-white/10 bg-muted border-2",
             "cursor-grab active:cursor-grabbing touch-none",
             // Extra touch-friendly grab area via internal padding effect
             "before:absolute before:inset-[-8px] before:content-[''] md:before:inset-[-4px]",

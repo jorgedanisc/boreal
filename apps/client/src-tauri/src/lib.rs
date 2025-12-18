@@ -5,6 +5,7 @@ mod exif_extractor;
 mod file_filter;
 mod image_processing;
 mod media_processor;
+mod memories;
 mod pairing;
 mod storage;
 mod upload_manager;
@@ -1106,6 +1107,10 @@ pub fn run() {
             cancel_upload,
             clear_finished_uploads,
             pause_upload,
+            memories::create_memory,
+            memories::get_memories,
+            memories::update_memory,
+            memories::delete_memory,
             resume_upload,
             retry_upload,
             remove_upload_item,

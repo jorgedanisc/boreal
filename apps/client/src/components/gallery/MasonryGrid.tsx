@@ -53,7 +53,7 @@ export function VirtualizedMasonryGrid({
   items,
   columns: initialColumns = 4,
   spacing = 4,
-  paddingX = 0,
+  //   paddingX = 0, // Unused
   paddingTop = 0,
   paddingBottom = 0,
   onItemClick,
