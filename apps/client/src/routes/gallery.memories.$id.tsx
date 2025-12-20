@@ -57,7 +57,7 @@ function MemoryDetailsPage() {
   return (
     <div className="absolute inset-0 overflow-y-auto bg-background text-foreground">
       <header
-        className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border/10 p-4 flex items-center gap-4 hidden md:flex"
+        className="sticky top-0 z-10 bg-background/80 backdrop-blur-md p-4 flex items-center gap-4 hidden md:flex"
         style={{ paddingTop: isDesktop ? 'calc(32px + 1rem)' : '1rem' }}
       >
         <Button variant="ghost" size="icon" onClick={() => navigate({ to: '/gallery/memories' })}>
@@ -73,7 +73,7 @@ function MemoryDetailsPage() {
         <Button
           variant="secondary"
           size="icon"
-          className="rounded-full bg-black/20 hover:bg-black/40 backdrop-blur-md border border-white/10 text-white"
+          className="rounded-full bg-black/20 hover:bg-black/40 backdrop-blur-md text-white"
           onClick={() => navigate({ to: '/gallery/memories' })}
         >
           <ChevronLeft className="w-5 h-5" />
@@ -82,7 +82,7 @@ function MemoryDetailsPage() {
 
       <div className="max-w-2xl mx-auto pb-20 space-y-6 md:p-6 md:pt-0">
         {/* Media Grid at Top (Scrollable for all items) */}
-        <div className="md:rounded-3xl overflow-hidden border-b md:border border-border/10 bg-card/30">
+        <div className="md:rounded-3xl overflow-hidden">
           <BentoMediaGrid mediaIds={memory.media_ids} scrollable />
         </div>
 

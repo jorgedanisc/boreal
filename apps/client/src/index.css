@@ -48,6 +48,8 @@
 }
 
 :root {
+  color-scheme: dark;
+  
   --background: oklch(18.971% 0.00816 296.997);
   --foreground: oklch(0.985 0 0);
   --card: oklch(20.913% 0.01021 303.579);

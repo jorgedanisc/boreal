@@ -81,6 +81,7 @@ Resources:
                   - 's3:RestoreObject'
                   - 's3:PutObjectTagging'
                   - 's3:GetObjectTagging'
+                  - 's3:DeleteBucket'
                 Resource:
                   - !GetAtt VaultBucket.Arn
                   - !Sub '${VaultBucket.Arn}/*'

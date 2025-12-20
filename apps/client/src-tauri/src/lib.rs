@@ -5,7 +5,7 @@ mod exif_extractor;
 mod file_filter;
 mod image_processing;
 mod manifest;
-mod media_processor;
+pub mod media_processor;
 mod memories;
 mod pairing;
 mod storage;
@@ -192,6 +192,80 @@ async fn rename_vault(
     }
     // Note: If vault is not loaded, the rename will happen on next load
     // when the user explicitly opens the vault
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    upload_state: State<'_, UploadManagerState>,
+    id: String,
+    delete_cloud: bool,
+) -> Result<(), String> {
+    // 1. Load config to get keys/bucket info
+    let config = store::load_vault(&app, &id)?;
+
+    // 2. Delete from Cloud (Optional)
+    if delete_cloud {
+        let storage = Storage::new(&config).await;
+        // Best effort: Try to empty and delete. Log errors but don't stop local deletion?
+        // Actually, if cloud deletion fails, maybe we should stop and tell user?
+        // But then they are stuck. Let's try and if fail, return error.
+
+        eprintln!("[Delete Vault] Emptying bucket {}...", config.bucket);
+        if let Err(e) = storage.empty_bucket().await {
+            return Err(format!(
+                "Failed to empty S3 bucket: {}. Manual cleanup required.",
+                e
+            ));
+        }
+
+        eprintln!("[Delete Vault] Deleting bucket {}...", config.bucket);
+        if let Err(e) = storage.delete_bucket().await {
+            // If we emptied it but failed to delete bucket (e.g. permission), warn but proceed?
+            // User prompt said "basically what we want to do is just delete it and also delete the aws resources"
+            // If we fail here, the vault is still in the list.
+            // Given the permission limitation (legacy stacks), we might want to be lenient here
+            // IF the error is AccessDenied.
+            eprintln!(
+                "[Delete Vault] Failed to delete bucket (might be permission issue): {}",
+                e
+            );
+            // Proceed to delete local data so user can remove the vault from UI
+        }
+    }
+
+    // 3. Unload if active
+    {
+        let mut config_guard = state.config.lock().await;
+        let is_active = config_guard.as_ref().map(|c| c.id == id).unwrap_or(false);
+
+        if is_active {
+            // Stop any uploads first
+            let manager_guard = upload_state.manager.lock().await;
+            if let Some(manager) = manager_guard.as_ref() {
+                // We should ideally cancel all, but clearing is enough as we are deleting storage
+                manager.clear_finished().await;
+            }
+
+            // Reset State
+            *config_guard = None;
+            *state.db.lock().await = None;
+            *state.storage.lock().await = None;
+        }
+    }
+
+    // 4. Delete Local Files
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_dir = app_dir.join("vaults").join(&id);
+    if vault_dir.exists() {
+        std::fs::remove_dir_all(&vault_dir).map_err(|e| e.to_string())?;
+    }
+
+    // 5. Delete from Registry
+    store::delete_vault(&app, &id)?;
+
     Ok(())
 }
 
@@ -1196,36 +1270,46 @@ async fn initiate_pairing(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    use tauri::menu::{Menu, MenuItem, Submenu};
+    #[cfg(desktop)]
     use tauri::Emitter;
 
-    tauri::Builder::default()
-        .setup(|app| {
-            // Create Developer menu with "Open Cache Folder" option
-            let developer_menu = Submenu::with_items(
-                app,
-                "Developer",
-                true,
-                &[&MenuItem::with_id(
-                    app,
-                    "open_cache_folder",
-                    "Open Cache Folder",
-                    true,
-                    None::<&str>,
-                )?],
-            )?;
+    let mut builder = tauri::Builder::default();
 
-            // Create the menu bar
-            let menu = Menu::with_items(app, &[&developer_menu])?;
-            app.set_menu(menu)?;
-
-            Ok(())
-        })
-        .on_menu_event(|app, event| {
+    #[cfg(desktop)]
+    {
+        builder = builder.on_menu_event(|app, event| {
             if event.id().as_ref() == "open_cache_folder" {
                 // Emit event to frontend to handle
                 app.emit("menu:open_cache_folder", ()).ok();
             }
+        });
+    }
+
+    builder
+        .setup(|app| {
+            #[cfg(desktop)]
+            {
+                use tauri::menu::{Menu, MenuItem, Submenu};
+                // Create Developer menu with "Open Cache Folder" option
+                let developer_menu = Submenu::with_items(
+                    app,
+                    "Developer",
+                    true,
+                    &[&MenuItem::with_id(
+                        app,
+                        "open_cache_folder",
+                        "Open Cache Folder",
+                        true,
+                        None::<&str>,
+                    )?],
+                )?;
+
+                // Create the menu bar
+                let menu = Menu::with_items(app, &[&developer_menu])?;
+                app.set_menu(menu)?;
+            }
+
+            Ok(())
         })
         .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -1234,6 +1318,26 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(
+            tauri_plugin_stronghold::Builder::new(|password| {
+                // Key derivation function for Stronghold
+                // We use argon2 to derive the snapshot key from the input password
+                // Since we are using an internal key "zero-config", the "password" here will be our internal key.
+                // But Stronghold expects a hashing function to turn that generic string into a 32-byte key.
+                // use argon2::Argon2;
+                // use quote::ToTokens;
+                // Actually, let's use a simpler sha256 for the stronghold key derivation
+                // or just rely on the default if we don't provide a custom builder?
+                // The correct way is to provide a function that hashes the password string to [u8; 32].
+
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(password.as_bytes());
+                let result = hasher.finalize();
+                result.to_vec()
+            })
+            .build(),
+        )
         .manage(AppState {
             storage: Arc::new(Mutex::new(None)),
             db: Arc::new(Mutex::new(None)),
@@ -1281,7 +1385,9 @@ pub fn run() {
             open_cache_folder,
             get_audio,
             get_supported_extensions,
+            get_supported_extensions,
             rename_vault,
+            delete_vault,
             // Manifest sync commands
             sync_manifest_upload,
             sync_manifest_download,

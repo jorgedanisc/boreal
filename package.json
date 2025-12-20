@@ -1,11 +1,13 @@
 {
-  "name": "boreal",
+  "name": "boreal-monorepo",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
-    "desktop:dev": "turbo run --filter=@boreal/client desktop:dev",
-    "desktop:build": "turbo run --filter=@boreal/client desktop:build",
+    "desktop:dev": "turbo run --filter=boreal desktop:dev",
+    "desktop:build": "turbo run --filter=boreal desktop:build",
+    "android:dev": "turbo run --filter=boreal android:dev",
+    "ios:dev": "turbo run --filter=boreal ios:dev",
     "deploy:template": "bun sst deploy --stage production"
   },
   "devDependencies": {

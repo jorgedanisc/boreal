@@ -6,14 +6,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { IconChevronRight, IconDotsVertical, IconLoader } from "@tabler/icons-react";
-import { TextCursorInputIcon, VaultIcon } from "lucide-react";
+import { IconChevronRight, IconDotsVertical, IconLoader, IconTrash } from "@tabler/icons-react";
+import { VaultIcon } from "lucide-react";
 
 interface VaultCardProps {
   vault: any;
   openLoading: string | null;
   onOpen: (id: string) => void;
   onRename?: (id: string) => void;
+  onDelete?: (id: string) => void;
   showChevron?: boolean;
   hideMenu?: boolean;
   hideBucket?: boolean;
@@ -24,64 +25,102 @@ export function VaultCard({
   openLoading,
   onOpen,
   onRename,
+  onDelete,
   showChevron = false,
-  hideMenu = false,
+  hideMenu = true,
   hideBucket = false
 }: VaultCardProps) {
+  const isLoading = openLoading === vault.id;
+
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => onOpen(vault.id)}
+      disabled={!!openLoading}
       className={cn(
-        "flex items-center gap-3 p-3 rounded-xl border bg-card hover:bg-accent/50 hover:border-accent transition-all text-left w-full group relative",
-        showChevron && "pr-2"
+        "relative overflow-hidden rounded-xl border p-3 text-left transition-all duration-200 w-full group",
+        "hover:scale-[1.02] active:scale-[0.98]",
+        "border-border/50 bg-card/50 hover:border-primary/60 hover:bg-gradient-to-br hover:from-primary/10 hover:via-primary/5 hover:to-transparent"
       )}
     >
-      <button
-        className="flex-1 flex items-center gap-3 min-w-0 text-left"
-        onClick={() => onOpen(vault.id)}
-        disabled={!!openLoading}
-      >
-        <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-primary-foreground transition-colors shrink-0">
-          {openLoading === vault.id ? (
+      <div className="relative flex items-center gap-3">
+        {/* Icon */}
+        <div className={cn(
+          "w-10 h-10 rounded-xl border border-white/10 flex items-center justify-center shrink-0 transition-all duration-200",
+          "bg-muted/80 text-muted-foreground",
+          "group-hover:bg-primary/20 group-hover:text-primary-foreground group-hover:border-primary"
+        )}>
+          {isLoading ? (
             <IconLoader className="w-4 h-4 animate-spin" />
           ) : (
             <VaultIcon className="w-4 h-4" />
           )}
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-medium text-sm truncate">{vault.name}</p>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <p className={cn(
+            "font-semibold text-sm truncate transition-colors",
+            "text-foreground/90 group-hover:text-foreground"
+          )}>
+            {vault.name}
+          </p>
           {!hideBucket && (
-            <p className="text-xs text-muted-foreground truncate">{vault.bucket}</p>
+            <p className="text-xs text-muted-foreground/80 truncate">{vault.bucket}</p>
           )}
           {vault.visits !== undefined && vault.visits > 0 && (
             <p className="text-[10px] text-muted-foreground/60">{vault.visits} visits</p>
           )}
         </div>
-        {showChevron && (
-          <IconChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
-        )}
-      </button>
 
-      {/* Context Menu for Rename */}
-      {!hideMenu && onRename && (
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6 -mr-1">
-                <IconDotsVertical className="w-3 h-3 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={(e) => {
-                e.stopPropagation();
-                onRename(vault.id);
-              }}>
-                <TextCursorInputIcon className="w-3 h-3 mr-2" />
-                Rename
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
-    </div>
+        {/* Chevron */}
+        {showChevron && (
+          <IconChevronRight className={cn(
+            "w-4 h-4 transition-all duration-200 shrink-0",
+            "text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5"
+          )} />
+        )}
+
+        {/* Context Menu */}
+        {!hideMenu && onRename && (
+          <div
+            className="transition-opacity shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-7 w-7">
+                  <IconDotsVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRename(vault.id);
+                  }}
+                  inset
+                >
+                  Rename
+                </DropdownMenuItem>
+                {onDelete && (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(vault.id);
+                    }}
+                  >
+                    <IconTrash className="w-3 h-3 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+      </div>
+    </button>
   );
 }
+

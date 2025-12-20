@@ -1,5 +1,7 @@
+import { buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { useNavigate } from '@tanstack/react-router';
-import { Sparkles, Image as ImageIcon, Map as MapIcon } from 'lucide-react';
+import { ApertureIcon, FilmIcon, Map as MapIcon } from 'lucide-react';
 import { SegmentedControl } from './ui/SegmentedControl';
 
 interface GalleryBottomNavProps {
@@ -11,7 +13,10 @@ export function GalleryBottomNav({ currentView }: GalleryBottomNavProps) {
 
   return (
     <div
-      className="backdrop-blur-2xl border border-white/10 shadow-2xl rounded-full p-1.5 h-14 bg-secondary/60 min-w-[280px] max-w-[90vw]"
+      className={cn(
+        buttonVariants({ variant: "glass" }),
+        "rounded-full! p-1 h-14 min-w-[280px] max-w-[90vw] hover:bg-secondary/60"
+      )}
     >
       <SegmentedControl
         value={currentView}
@@ -28,17 +33,17 @@ export function GalleryBottomNav({ currentView }: GalleryBottomNavProps) {
           {
             value: 'memories',
             label: 'Memories',
-            icon: <Sparkles className="w-5 h-5 mb-0.5" />
+            icon: <FilmIcon className="size-5 mb-0.5" />
           },
           {
             value: 'gallery',
             label: 'Library',
-            icon: <ImageIcon className="w-5 h-5 mb-0.5" />
+            icon: <ApertureIcon className="size-5 mb-0.5" />
           },
           {
             value: 'map',
             label: 'Map',
-            icon: <MapIcon className="w-5 h-5 mb-0.5" />
+            icon: <MapIcon className="size-5 mb-0.5" />
           },
         ]}
       />

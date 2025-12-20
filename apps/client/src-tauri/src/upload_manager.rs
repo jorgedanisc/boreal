@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::sleep;
@@ -568,8 +568,11 @@ impl UploadManager {
                 let output_path = temp_dir.join(format!("{}.mp4", id));
 
                 // Process video (Transcode to H.265, generate thumb, preview not used yet)
+                let transcoder = media_processor::TauriTranscoder {
+                    app: app_handle.clone(),
+                };
                 let processed =
-                    media_processor::process_video(&app_handle, &item.path, &output_path)
+                    media_processor::process_video(&transcoder, &item.path, &output_path)
                         .await
                         .context(format!("Failed to process video: {:?}", item.path))?;
 
@@ -619,8 +622,11 @@ impl UploadManager {
                 let temp_dir = std::env::temp_dir();
                 let output_path = temp_dir.join(format!("{}.opus", id));
 
+                let transcoder = media_processor::TauriTranscoder {
+                    app: app_handle.clone(),
+                };
                 let processed =
-                    media_processor::process_audio(&app_handle, &item.path, &output_path)
+                    media_processor::process_audio(&transcoder, &item.path, &output_path)
                         .await
                         .context(format!("Failed to process audio: {:?}", item.path))?;
 
@@ -686,20 +692,38 @@ impl UploadManager {
 
         // Spawn task to listen for progress updates
         let progress_task = tokio::spawn(async move {
+            let mut last_update_time = Instant::now();
+            let mut last_progress = 0.0;
+
             while let Some((uploaded, total)) = progress_rx.recv().await {
+                // Throttle updates: max 10 per second unless progress jumps by > 1%
+                let now = Instant::now();
                 let progress = if total > 0 {
                     (uploaded as f64 / total as f64) * 0.5 // Original upload is 0-50%
                 } else {
                     0.0
                 };
-                Self::update_progress_static(
-                    &queue_clone,
-                    &app_clone,
-                    &id_clone,
-                    progress,
-                    (progress * item_size as f64) as u64,
-                )
-                .await;
+
+                // Allow update if:
+                // 1. First update
+                // 2. > 100ms elapsed
+                // 3. > 1% change
+                // 4. Complete (approximate check, though "Complete" status is set later)
+                if last_progress == 0.0
+                    || now.duration_since(last_update_time).as_millis() >= 100
+                    || (progress - last_progress).abs() >= 0.01
+                {
+                    Self::update_progress_static(
+                        &queue_clone,
+                        &app_clone,
+                        &id_clone,
+                        progress,
+                        (progress * item_size as f64) as u64,
+                    )
+                    .await;
+                    last_update_time = now;
+                    last_progress = progress;
+                }
             }
         });
 

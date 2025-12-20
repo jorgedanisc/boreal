@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Sparkles } from 'lucide-react';
 import { useEffect, useState, memo } from 'react';
 import { getPhotos } from '@/lib/vault';
 import { MediaThumbnail } from './MediaThumbnail';
@@ -47,11 +46,7 @@ export const BentoMediaGrid = memo(({ mediaIds, scrollable = false }: BentoMedia
   const count = mediaIds.length;
 
   // Empty state
-  if (count === 0) return (
-    <div className="aspect-4/3 bg-muted/20 relative overflow-hidden flex items-center justify-center text-muted-foreground/20 rounded-2xl p-2">
-      <Sparkles className="w-12 h-12" />
-    </div>
-  );
+  if (count === 0) return null;
 
   // Scrollable mode - horizontal bento scroll through all media
   if (scrollable) {
@@ -67,7 +62,7 @@ export const BentoMediaGrid = memo(({ mediaIds, scrollable = false }: BentoMedia
               return (
                 <div
                   key={id}
-                  className="shrink-0 rounded-xl overflow-hidden h-52 w-52"
+                  className="shrink-0 overflow-hidden h-52 w-52"
                 >
                   <MediaThumbnail
                     id={id}
@@ -82,7 +77,7 @@ export const BentoMediaGrid = memo(({ mediaIds, scrollable = false }: BentoMedia
               const nextId = mediaIds[index + 1];
               return (
                 <div key={id} className="shrink-0 flex flex-col gap-2 h-52">
-                  <div className="rounded-xl overflow-hidden h-[100px] w-28">
+                  <div className="overflow-hidden h-[100px] w-28">
                     <MediaThumbnail
                       id={id}
                       mediaType={mediaTypes[id]}
@@ -91,7 +86,7 @@ export const BentoMediaGrid = memo(({ mediaIds, scrollable = false }: BentoMedia
                     />
                   </div>
                   {nextId && (
-                    <div className="rounded-xl overflow-hidden h-[100px] w-28">
+                    <div className="overflow-hidden h-[100px] w-28">
                       <MediaThumbnail
                         id={nextId}
                         mediaType={mediaTypes[nextId]}
@@ -240,7 +235,7 @@ export const BentoMediaGrid = memo(({ mediaIds, scrollable = false }: BentoMedia
             thumbnail={thumbnails[mediaIds[3]]}
           />
           {count > 4 && (
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex items-center justify-center rounded-lg">
+            <div className="absolute inset-0 backdrop-blur-[2px] flex items-center justify-center rounded-lg">
               <span className="text-white font-semibold text-base">+{count - 4}</span>
             </div>
           )}

@@ -24,6 +24,7 @@
           "sidecar": true
         }
       ]
-    }
+    },
+    "stronghold:default"
   ]
 }

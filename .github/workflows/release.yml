@@ -1,0 +1,94 @@
+name: "Release"
+
+on: workflow_dispatch
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.outputs.outputs.release-id }}
+      version: ${{ steps.outputs.outputs.version }}
+      new_release_published: ${{ steps.outputs.outputs.new_release_published }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: apps/client
+        run: npm install
+
+      - name: Run Semantic Release
+        id: semantic
+        working-directory: apps/client
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx semantic-release
+
+      - name: Get Release Outputs
+        id: outputs
+        working-directory: apps/client
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' package.json | cut -d'"' -f4)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          
+          # Check if a tag points to HEAD, indicating a new release
+          if git describe --tags --exact-match HEAD >/dev/null 2>&1; then
+            echo "new_release_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_release_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish-tauri:
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Temporarily disabled - only building for Raspberry Pi (ARM64 Linux)
+          # - platform: "macos-15" # Apple Silicon
+          #   args: "--target aarch64-apple-darwin"
+          #   target: "aarch64-apple-darwin"
+          # - platform: "macos-13" # Intel
+          #   args: "--target x86_64-apple-darwin"
+          #   target: "x86_64-apple-darwin"
+          # - platform: "ubuntu-22.04"
+          #   args: "--bundles deb"
+          #   target: "x86_64-unknown-linux-gnu"
+          - platform: "ubuntu-22.04"
+            args: "--target aarch64-unknown-linux-gnu --bundles deb,appimage"
+            target: "aarch64-unknown-linux-gnu"
+          # - platform: "ubuntu-24.04"
+          #   args: "--bundles appimage,rpm"
+          #   target: "x86_64-unknown-linux-gnu"
+          # - platform: "windows-latest"
+          #   args: ""
+          #   target: "x86_64-pc-windows-msvc"
+          # - platform: "windows-11-arm"
+          #   args: "--target aarch64-pc-windows-msvc"
+          #   target: "aarch64-pc-windows-msvc"
+
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: ${{ matrix.args }}
+      sign-binaries: true
+      asset-prefix: "boreal"
+      upload-artifacts: false
+      release-id: ${{ needs.release.outputs.version }} # Use version as release ref since SR tags it
+    secrets: inherit

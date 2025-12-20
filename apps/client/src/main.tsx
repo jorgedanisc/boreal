@@ -117,7 +117,7 @@ initSplash();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+    <Suspense fallback={<div className="h-dvh w-dvw bg-background" />}>
       <RouterProvider router={router} />
     </Suspense>
   </StrictMode>

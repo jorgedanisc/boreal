@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { getVaults, loadVault, type VaultPublic, renameVault } from "@/lib/vault";
+import { getVaults, loadVault, type VaultPublic, renameVault, deleteVault } from "@/lib/vault";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { IconArrowLeft, IconSearch, IconLoader } from "@tabler/icons-react";
 import { VaultCard } from "@/components/vault/VaultCard";
 import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
+import { DeleteVaultDialog } from "@/components/vault/DeleteVaultDialog";
+import { type } from "@tauri-apps/plugin-os";
+import { cn } from "@/lib/utils";
 
 export function VaultsPage() {
   const navigate = useNavigate();
@@ -15,8 +18,14 @@ export function VaultsPage() {
   const [openLoading, setOpenLoading] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
     fetchVaults();
   }, []);
 
@@ -38,6 +47,18 @@ export function VaultsPage() {
     }
   };
 
+  const handleDelete = async (deleteCloud: boolean) => {
+    if (!deleteId) return;
+    try {
+      await deleteVault(deleteId, deleteCloud);
+      fetchVaults();
+      setDeleteId(null);
+    } catch (e) {
+      console.error("Failed to delete vault:", e);
+      alert("Failed to delete vault: " + String(e));
+    }
+  };
+
   const handleOpenVault = async (id: string) => {
     setOpenLoading(id);
     try {
@@ -56,7 +77,10 @@ export function VaultsPage() {
   );
 
   return (
-    <div className="flex flex-col">
+    <div className={cn(
+      "flex flex-col",
+      isDesktop ? "pt-8" : "pt-0",
+    )}>
       {/* Header */}
       <header className="p-4 border-b flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate({ to: "/" })}>
@@ -80,7 +104,7 @@ export function VaultsPage() {
 
       {/* Vault List */}
       <ScrollArea className="flex-1">
-        <div className="p-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="p-4 grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {loading ? (
             <div className="col-span-full py-12 flex justify-center">
               <IconLoader className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -95,8 +119,10 @@ export function VaultsPage() {
                 key={vault.id}
                 vault={vault}
                 openLoading={openLoading}
+                hideMenu={false}
                 onOpen={handleOpenVault}
                 onRename={setRenameId}
+                onDelete={setDeleteId}
               />
             ))
           )}
@@ -108,6 +134,13 @@ export function VaultsPage() {
         onOpenChange={(open) => !open && setRenameId(null)}
         vaultName={vaults.find(v => v.id === renameId)?.name || ""}
         onConfirm={handleRename}
+      />
+
+      <DeleteVaultDialog
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        vaultName={vaults.find(v => v.id === deleteId)?.name || ""}
+        onConfirm={handleDelete}
       />
     </div>
   );

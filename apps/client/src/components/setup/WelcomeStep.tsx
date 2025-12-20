@@ -9,7 +9,7 @@ import { IconChevronRight, IconDownload, IconLoader, IconPlus, IconWifi } from "
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 // import { getDailyQuote } from "@/lib/quotes";
-import { ScanQrCodeIcon } from "lucide-react";
+import { ArrowRightIcon, ScanQrCodeIcon } from "lucide-react";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
@@ -65,9 +65,9 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
       {/* Aurora Background */}
       <div className="fixed inset-x-0 -top-8 h-64 overflow-hidden pointer-events-none opacity-25">
         <Aurora
-          colorStops={["#5F03BD", "#2AEFB6", "#0B7BF5"]}
+          colorStops={["#839e9e", "#0B7BF5", "#1f3fad"]}
           blend={1.5}
-          amplitude={0.7}
+          amplitude={0.2}
           speed={0.35}
         />
       </div>
@@ -84,9 +84,18 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-                      {t("setup.welcome.openVault")}
-                    </p>
+                    <div className="flex items-center gap-2 flex-row">
+                      <Button
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={() => navigate({ to: "/vaults" })}
+                      >
+                        <p className="text-sm font-medium uppercase tracking-wider">
+                          {t("setup.welcome.openVault")}
+                        </p>
+                        <ArrowRightIcon className="size-3" />
+                      </Button>
+                    </div>
                     {/* Only show 'See all' arrow if we are clamping the list */}
                     {vaults.length > MAX_VISIBLE_VAULTS && (
                       <Button
@@ -154,40 +163,58 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
             )}
 
             {/* Actions */}
-            <div className="space-y-3">
+            <div className="space-y-4 mt-12">
               {vaults.length > 0 && (
-                <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider px-1 pt-2">
-                  {t("setup.welcome.newVault")}
-                </p>
-              )}
-
-              <div className="grid grid-cols-3 gap-4">
                 <Button
-                  variant="outline"
-                  className="h-auto py-6 flex flex-col gap-2"
+                  variant="ghost"
+                  className="text-muted-foreground"
                   onClick={onCreateVault}
                 >
-                  <IconPlus className="w-6 h-6" />
-                  <span className="font-medium">{t("setup.welcome.createVault")}</span>
+                  <p className="text-sm font-medium uppercase tracking-wider">
+                    {t("setup.welcome.newVault")}
+                  </p>
                 </Button>
+              )}
 
-                <Button
-                  variant="outline"
-                  className="h-auto py-6 flex flex-col gap-2"
+              <div className="grid grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={onCreateVault}
+                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <IconPlus className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <span className="font-medium text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                      {t("setup.welcome.createVault")}
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => navigate({ to: "/scan" })}
+                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
-                  <ScanQrCodeIcon className="w-6 h-6" />
-                  <span className="font-medium">Scan QR</span>
-                </Button>
+                  <div className="flex flex-col items-center gap-2">
+                    <ScanQrCodeIcon className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <span className="font-medium text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                      Scan QR
+                    </span>
+                  </div>
+                </button>
 
-                <Button
-                  variant="outline"
-                  className="h-auto py-6 flex flex-col gap-2"
+                <button
+                  type="button"
                   onClick={() => navigate({ to: "/pairing" })}
+                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
-                  <IconWifi className="w-6 h-6" />
-                  <span className="font-medium">Pair Device</span>
-                </Button>
+                  <div className="flex flex-col items-center gap-2">
+                    <IconWifi className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <span className="font-medium text-xs text-foreground/80 group-hover:text-foreground transition-colors">
+                      Pair Device
+                    </span>
+                  </div>
+                </button>
               </div>
 
               <Button

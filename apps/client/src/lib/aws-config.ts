@@ -1,29 +1,57 @@
 import { customAlphabet } from 'nanoid';
 
+export type Continent = "North America" | "Europe" | "Asia Pacific" | "South America";
+
 export interface AwsRegion {
   code: string;
-  name: string;
-  flag: string;
+  city: string;
+  continent: Continent;
+  countryCode: string;
 }
 
 export const AWS_REGIONS: AwsRegion[] = [
-  { code: "us-east-1", name: "US East (N. Virginia)", flag: "🇺🇸" },
-  { code: "us-east-2", name: "US East (Ohio)", flag: "🇺🇸" },
-  { code: "us-west-1", name: "US West (N. California)", flag: "🇺🇸" },
-  { code: "us-west-2", name: "US West (Oregon)", flag: "🇺🇸" },
-  { code: "eu-west-1", name: "Europe (Ireland)", flag: "🇮🇪" },
-  { code: "eu-west-2", name: "Europe (London)", flag: "🇬🇧" },
-  { code: "eu-west-3", name: "Europe (Paris)", flag: "🇫🇷" },
-  { code: "eu-central-1", name: "Europe (Frankfurt)", flag: "🇩🇪" },
-  { code: "eu-north-1", name: "Europe (Stockholm)", flag: "🇸🇪" },
-  { code: "ap-southeast-1", name: "Asia Pacific (Singapore)", flag: "🇸🇬" },
-  { code: "ap-southeast-2", name: "Asia Pacific (Sydney)", flag: "🇦🇺" },
-  { code: "ap-northeast-1", name: "Asia Pacific (Tokyo)", flag: "🇯🇵" },
-  { code: "ap-northeast-2", name: "Asia Pacific (Seoul)", flag: "🇰🇷" },
-  { code: "ap-south-1", name: "Asia Pacific (Mumbai)", flag: "🇮🇳" },
-  { code: "sa-east-1", name: "South America (São Paulo)", flag: "🇧🇷" },
-  { code: "ca-central-1", name: "Canada (Central)", flag: "🇨🇦" },
+  // North America
+  { code: "us-east-1", city: "N. Virginia", continent: "North America", countryCode: "US" },
+  { code: "us-east-2", city: "Ohio", continent: "North America", countryCode: "US" },
+  { code: "us-west-1", city: "N. California", continent: "North America", countryCode: "US" },
+  { code: "us-west-2", city: "Oregon", continent: "North America", countryCode: "US" },
+  { code: "ca-central-1", city: "Canada", continent: "North America", countryCode: "CA" },
+  // Europe
+  { code: "eu-west-1", city: "Ireland", continent: "Europe", countryCode: "IE" },
+  { code: "eu-west-2", city: "London", continent: "Europe", countryCode: "GB" },
+  { code: "eu-west-3", city: "Paris", continent: "Europe", countryCode: "FR" },
+  { code: "eu-central-1", city: "Frankfurt", continent: "Europe", countryCode: "DE" },
+  { code: "eu-north-1", city: "Stockholm", continent: "Europe", countryCode: "SE" },
+  // Asia Pacific
+  { code: "ap-southeast-1", city: "Singapore", continent: "Asia Pacific", countryCode: "SG" },
+  { code: "ap-southeast-2", city: "Sydney", continent: "Asia Pacific", countryCode: "AU" },
+  { code: "ap-northeast-1", city: "Tokyo", continent: "Asia Pacific", countryCode: "JP" },
+  { code: "ap-northeast-2", city: "Seoul", continent: "Asia Pacific", countryCode: "KR" },
+  { code: "ap-south-1", city: "Mumbai", continent: "Asia Pacific", countryCode: "IN" },
+  // South America
+  { code: "sa-east-1", city: "São Paulo", continent: "South America", countryCode: "BR" },
 ];
+
+/** Group regions by continent for display in dropdowns */
+export function getRegionsByContinent(): Map<Continent, AwsRegion[]> {
+  const grouped = new Map<Continent, AwsRegion[]>();
+  const order: Continent[] = ["North America", "Europe", "Asia Pacific", "South America"];
+
+  for (const continent of order) {
+    grouped.set(continent, []);
+  }
+
+  for (const region of AWS_REGIONS) {
+    grouped.get(region.continent)!.push(region);
+  }
+
+  return grouped;
+}
+
+/** Get display name for a region (city name with code) */
+export function getRegionDisplayName(region: AwsRegion): string {
+  return `${region.city} (${region.code})`;
+}
 
 export type StorageTier = "deep-archive" | "instant-retrieval";
 

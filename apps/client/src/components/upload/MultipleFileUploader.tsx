@@ -275,7 +275,7 @@ export function MultipleFileUploader() {
       )} */}
 
       <Drawer open={isOpen} onOpenChange={setIsOpen}>
-        <DrawerContent className="h-[65%] max-w-xl w-[calc(100%-16px)] mx-auto flex flex-col">
+        <DrawerContent className="h-[65%] max-w-xl w-[calc(100%-16px)] mx-auto flex flex-col bg-background/80 backdrop-blur-2xl border border-white/10 shadow-2xl">
           <DrawerHeader className="px-6 pb-2 flex-none flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">

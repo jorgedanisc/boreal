@@ -33,6 +33,14 @@ export async function renameVault(id: string, newName: string): Promise<void> {
   }
 }
 
+export async function deleteVault(id: string, deleteCloud: boolean): Promise<void> {
+  try {
+    await invoke('delete_vault', { id, deleteCloud });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
 export async function getActiveVault(): Promise<VaultPublic | null> {
   try {
     return await invoke('get_active_vault');

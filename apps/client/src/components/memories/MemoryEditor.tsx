@@ -1,12 +1,12 @@
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerFooter } from '@/components/ui/drawer';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Drawer, DrawerContent, DrawerFooter } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useState, useEffect, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getPhotos, Photo, getThumbnail, queueManifestSync } from '@/lib/vault';
-import { Check, X, Calendar as CalendarIcon, Loader2, Search, Music } from 'lucide-react';
+import { Check, X, Calendar as CalendarIcon, Loader2, Search, Music, PaperclipIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -125,44 +125,22 @@ export function MemoryEditor({ open, onOpenChange, onSave }: MemoryEditorProps) 
       {/* Main Editor - Now a Drawer (from bottom) */}
       <Drawer open={open} onOpenChange={onOpenChange}>
         <DrawerContent className="h-[85vh] flex flex-col">
-          <DrawerHeader className="border-b border-white/10 shrink-0">
-            <DrawerTitle className="text-xl">New Entry</DrawerTitle>
-          </DrawerHeader>
-
           <div className="flex-1 flex flex-col gap-4 p-6 overflow-y-auto">
-            {/* Date Picker */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "justify-start text-left font-normal w-[200px] bg-white/5 border-white/10",
-                    !date && "text-muted-foreground"
-                  )}
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "PPP") : <span>Pick a date</span>}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar mode="single" selected={date} onSelect={setDate} initialFocus />
-              </PopoverContent>
-            </Popover>
 
             {/* Title */}
             <Input
               placeholder="Title"
               value={title}
               onChange={e => setTitle(e.target.value)}
-              className="text-2xl font-bold bg-transparent border-none px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50 h-auto"
+              className="text-xl! font-semibold bg-transparent border-none px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50 h-auto"
             />
 
             {/* Content */}
             <Textarea
-              placeholder="What will you remember most about today?"
+              placeholder="What will you remember most about today? Or what memory you want to keep forever?"
               value={content}
               onChange={e => setContent(e.target.value)}
-              className="flex-1 min-h-[150px] resize-none bg-transparent border-none px-0 focus-visible:ring-0 text-lg leading-relaxed"
+              className="flex-1 min-h-[150px] resize-none bg-transparent border-none px-0 focus-visible:ring-0 text-md! leading-relaxed"
             />
 
             {/* Selected Media Preview */}
@@ -188,13 +166,34 @@ export function MemoryEditor({ open, onOpenChange, onSave }: MemoryEditorProps) 
             )}
 
             {/* Attach Media Button */}
-            <Button
-              variant="outline"
-              className="border-dashed border-white/20 hover:bg-white/5"
-              onClick={() => setIsMediaDialogOpen(true)}
-            >
-              + Attach Media
-            </Button>
+            <div className="flex items-center flex-row w-full gap-4 overflow-hidden">
+              {/* Date Picker */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "justify-start text-left font-normal bg-white/5 border-white/10",
+                      !date && "text-muted-foreground"
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {date ? format(date, "PPP") : <span>Pick a date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar mode="single" selected={date} onSelect={setDate} initialFocus />
+                </PopoverContent>
+              </Popover>
+              <Button
+                variant="outline"
+                className="border-dashed grow border-white/20 hover:bg-white/5"
+                onClick={() => setIsMediaDialogOpen(true)}
+              >
+                <PaperclipIcon className="mr-1 h-4 w-4" />
+                Attach Media
+              </Button>
+            </div>
           </div>
 
           <DrawerFooter className="border-t border-white/10 bg-muted/10 shrink-0">
@@ -212,12 +211,12 @@ export function MemoryEditor({ open, onOpenChange, onSave }: MemoryEditorProps) 
       {/* Media Selection - Now a Dialog (centered popup) */}
       <Dialog open={isMediaDialogOpen} onOpenChange={setIsMediaDialogOpen}>
         <DialogContent className="sm:max-w-[700px] max-h-[85vh] flex flex-col bg-background/95 backdrop-blur-xl border-white/10 p-0 overflow-hidden gap-0">
-          <DialogHeader className="p-4 pb-2 border-b border-white/10 shrink-0">
+          <DialogHeader className="p-4 border-b border-white/10 shrink-0">
             <DialogTitle>Select Media</DialogTitle>
           </DialogHeader>
 
           {/* Search */}
-          <div className="shrink-0 p-4 bg-background/95 border-b border-white/5">
+          <div className="shrink-0 p-3 bg-background/95 border-b border-white/5">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -244,12 +243,12 @@ export function MemoryEditor({ open, onOpenChange, onSave }: MemoryEditorProps) 
             </div>
           </div>
 
-          <DialogFooter className="p-4 border-t border-white/10 shrink-0">
+          <div className="border-t border-white/10 shrink-0 p-3">
             <div className="flex justify-between items-center w-full">
               <span className="text-sm text-muted-foreground">{selectedMediaIds.length} selected</span>
               <Button onClick={() => setIsMediaDialogOpen(false)}>Done</Button>
             </div>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </>

@@ -211,6 +211,9 @@ impl PairingManager {
     // ========================
 
     pub async fn start_listening(&self) -> Result<()> {
+        // Clean up any existing session first
+        self.stop_listening().await;
+
         // Create session
         {
             let mut session = self.session.lock().await;
@@ -218,10 +221,21 @@ impl PairingManager {
         }
 
         // Start mDNS broadcast
-        self.start_mdns_broadcast().await?;
+        if let Err(e) = self.start_mdns_broadcast().await {
+            self.set_error(format!("Failed to start mDNS: {}", e)).await;
+            return Err(e);
+        }
 
-        // Start HTTP server
-        self.start_pairing_server().await?;
+        // Start HTTP server - this is the critical part that can fail with "address in use"
+        if let Err(e) = self.start_pairing_server().await {
+            self.set_error(format!("Failed to start server: {}", e))
+                .await;
+            // Clean up mDNS since server failed
+            if let Some(mdns) = self.mdns.lock().await.take() {
+                let _ = mdns.shutdown();
+            }
+            return Err(e);
+        }
 
         self.set_state(PairingState::Listening).await;
 
@@ -303,21 +317,28 @@ impl PairingManager {
 
         let addr = SocketAddr::from(([0, 0, 0, 0], PAIRING_PORT));
 
-        tokio::spawn(async move {
-            let listener = match tokio::net::TcpListener::bind(addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    eprintln!("[Pairing] Failed to bind: {}", e);
-                    return;
-                }
-            };
+        // Bind synchronously to catch errors immediately
+        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+            anyhow!(
+                "Port {} is already in use. Please close other pairing sessions first: {}",
+                PAIRING_PORT,
+                e
+            )
+        })?;
 
-            axum::serve(listener, router)
+        let status_for_task = status.clone();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, router)
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.recv().await;
                 })
                 .await
-                .ok();
+            {
+                eprintln!("[Pairing] Server error: {}", e);
+                let mut s = status_for_task.write().await;
+                s.state = PairingState::Error;
+                s.error = Some(format!("Server error: {}", e));
+            }
         });
 
         Ok(())

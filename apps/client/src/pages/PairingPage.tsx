@@ -1,24 +1,27 @@
-import { useEffect, useState, useCallback } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import { Button } from "@/components/ui/button";
 import {
-  IconArrowLeft,
-  IconCheck,
-  IconX,
-  IconLoader2,
-  IconDevices,
-} from "@tabler/icons-react";
-import { useNavigate } from "@tanstack/react-router";
-import {
-  startPairingMode,
-  stopPairingMode,
   confirmPairing,
   getPairingStatus,
   getReceivedVaultConfig,
-  type PairingStatus,
+  startPairingMode,
+  stopPairingMode,
   type PairingState,
+  type PairingStatus,
 } from "@/lib/pairing";
+import { cn } from "@/lib/utils";
 import { importVault } from "@/lib/vault";
+import {
+  IconArrowLeft,
+  IconCheck,
+  IconDevices,
+  IconLoader2,
+  IconX,
+} from "@tabler/icons-react";
+import { useNavigate } from "@tanstack/react-router";
+import { type } from "@tauri-apps/plugin-os";
+import { LoaderIcon, LockIcon } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useState } from "react";
 
 export function PairingPage() {
   const navigate = useNavigate();
@@ -28,11 +31,19 @@ export function PairingPage() {
     connected_device: null,
     error: null,
   });
+  const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+
     startPairingMode().catch((e) => {
       console.error("Failed to start pairing mode:", e);
-      setStatus((s) => ({ ...s, state: "error", error: String(e) }));
+      // Extract meaningful error message
+      const errorMessage = String(e).replace(/^Error:\s*/i, '');
+      setStatus((s) => ({ ...s, state: "error", error: errorMessage }));
     });
     return () => {
       stopPairingMode().catch(console.error);
@@ -77,8 +88,31 @@ export function PairingPage() {
     navigate({ to: "/" });
   }, [navigate]);
 
+  const handleRetry = useCallback(async () => {
+    // Reset status to idle first
+    setStatus({
+      state: "idle",
+      verification_code: null,
+      connected_device: null,
+      error: null,
+    });
+
+    // Stop any existing session and start fresh
+    try {
+      await stopPairingMode();
+      await startPairingMode();
+    } catch (e) {
+      console.error("Failed to retry pairing:", e);
+      const errorMessage = String(e).replace(/^Error:\s*/i, '');
+      setStatus((s) => ({ ...s, state: "error", error: errorMessage }));
+    }
+  }, []);
+
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className={cn(
+      isDesktop ? "pt-8" : "pt-0",
+      "min-h-screen flex flex-col bg-background"
+    )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={handleBack} className="h-8 w-8">
@@ -107,7 +141,7 @@ export function PairingPage() {
           {status.state === "transferring" && <TransferringState key="transferring" />}
           {status.state === "success" && <SuccessState key="success" />}
           {status.state === "error" && (
-            <ErrorState key="error" error={status.error} onRetry={handleBack} />
+            <ErrorState key="error" error={status.error} onRetry={handleRetry} onBack={handleBack} />
           )}
         </AnimatePresence>
       </div>
@@ -123,7 +157,7 @@ function IdleState() {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <IconLoader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+      <LoaderIcon className="w-6 h-6 text-muted-foreground animate-spin" />
       <p className="text-xs text-muted-foreground">Initializing...</p>
     </motion.div>
   );
@@ -149,7 +183,7 @@ function ListeningState() {
 
       <div className="space-y-1.5">
         <h2 className="text-base font-medium">Waiting for connection</h2>
-        <p className="text-xs text-muted-foreground leading-relaxed">
+        <p className="max-w-42 mx-auto text-xs text-muted-foreground leading-relaxed">
           On the other device, open Boreal and tap <span className="font-medium text-foreground">Share Over Network</span>
         </p>
       </div>
@@ -166,7 +200,7 @@ function ListeningState() {
         ))}
       </div>
 
-      <p className="text-[10px] text-muted-foreground/60">End-to-end encrypted</p>
+      <p className="text-[10px] flex items-center gap-1 text-muted-foreground"><LockIcon className="size-2" /> End-to-end encrypted</p>
     </motion.div>
   );
 }
@@ -275,7 +309,10 @@ function SuccessState() {
   );
 }
 
-function ErrorState({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+function ErrorState({ error, onRetry, onBack }: { error: string | null; onRetry: () => void; onBack: () => void }) {
+  // Determine if it's a port-in-use error for specific messaging
+  const isPortError = error?.toLowerCase().includes('already in use') || error?.toLowerCase().includes('port');
+
   return (
     <motion.div
       className="flex flex-col items-center gap-4 max-w-xs"
@@ -287,11 +324,20 @@ function ErrorState({ error, onRetry }: { error: string | null; onRetry: () => v
       </div>
       <div className="text-center space-y-1">
         <h2 className="text-base font-medium text-destructive">Pairing failed</h2>
-        <p className="text-xs text-muted-foreground">{error || "An error occurred"}</p>
+        <p className="text-xs text-muted-foreground">
+          {isPortError
+            ? "Another pairing session is still running. Try again in a moment."
+            : (error || "An error occurred")}
+        </p>
       </div>
-      <Button onClick={onRetry} variant="outline" size="sm" className="text-xs">
-        Go back
-      </Button>
+      <div className="flex gap-2">
+        <Button onClick={onBack} variant="outline" size="sm" className="text-xs">
+          Go back
+        </Button>
+        <Button onClick={onRetry} size="sm" className="text-xs">
+          Try again
+        </Button>
+      </div>
     </motion.div>
   );
 }

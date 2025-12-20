@@ -3,7 +3,7 @@ import { TitleBar } from '../components/TitleBar'
 
 export const Route = createRootRoute({
   component: () => (
-    <div className="relative dvh dvw bg-background">
+    <div className="relative h-dvh w-dvw bg-background">
       <TitleBar />
       <Outlet />
     </div>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "boreal",
+  "productName": "Boreal",
   "version": "0.1.0",
   "identifier": "com.client.boreal",
   "build": {
@@ -16,7 +16,8 @@
         "title": "",
         "width": 850,
         "height": 700,
-        "titleBarStyle": "Overlay"
+        "titleBarStyle": "Overlay",
+        "backgroundColor": "#060028"
       }
     ],
     "security": {
@@ -32,9 +33,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/ffmpeg"
     ]
   },
   "plugins": {

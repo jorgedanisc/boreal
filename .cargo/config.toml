@@ -1,0 +1,8 @@
+[build]
+# Ensure we're targeting Android, not the host
+target = "aarch64-linux-android"
+
+[env]
+# Ensure CMAKE respects Android target
+CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1"
+CARGO_PROFILE_RELEASE_LTO = "thin"

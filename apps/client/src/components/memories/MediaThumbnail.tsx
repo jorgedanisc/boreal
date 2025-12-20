@@ -58,7 +58,7 @@ export const MediaThumbnail = memo(function MediaThumbnail({
     return (
       <div
         className={cn(
-          "relative overflow-hidden bg-muted/30 w-full h-full rounded-lg flex items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors",
+          "relative overflow-hidden bg-muted/30 w-full h-full rounded-2xl flex items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors",
           className
         )}
         onClick={onClick}
@@ -80,7 +80,7 @@ export const MediaThumbnail = memo(function MediaThumbnail({
   // Loading state
   if (loading) {
     return (
-      <div className={cn("relative overflow-hidden bg-muted/30 w-full h-full rounded-lg", className)}>
+      <div className={cn("relative overflow-hidden bg-muted/30 w-full h-full rounded-2xl", className)}>
         <div className="w-full h-full animate-pulse bg-muted/50" />
       </div>
     );
@@ -89,7 +89,7 @@ export const MediaThumbnail = memo(function MediaThumbnail({
   // Image/Video thumbnail
   return (
     <div
-      className={cn("relative overflow-hidden bg-muted/30 w-full h-full rounded-lg cursor-pointer", className)}
+      className={cn("relative overflow-hidden bg-muted/30 w-full h-full rounded-2xl cursor-pointer", className)}
       onClick={onClick}
     >
       {thumbnail ? (

@@ -1,42 +1,61 @@
 {
-    "$schema": "https://turborepo.com/schema.json",
-    "tasks": {
-        "build": {
-            "dependsOn": [
-                "^build"
-            ],
-            "outputs": [
-                "dist/**",
-                ".next/**",
-                "!.next/cache/**"
-            ]
-        },
-        "dev": {
-            "cache": false,
-            "persistent": true
-        },
-        "core:build": {
-            "cache": false
-        },
-        "infra:build": {
-            "cache": false
-        },
-        "image-vision:build": {
-            "cache": false
-        },
-        "desktop:dev": {
-            "cache": false,
-            "persistent": true,
-            "dependsOn": [
-                "core:build",
-                "infra:build",
-                "image-vision:build"
-            ]
-        },
-        "lint": {
-            "dependsOn": [
-                "^lint"
-            ]
-        }
+  "$schema": "https://turborepo.com/schema.json",
+  "envMode": "loose",
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        ".next/**",
+        "!.next/cache/**"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "core:build": {
+      "cache": false
+    },
+    "infra:build": {
+      "cache": false
+    },
+    "image-vision:build": {
+      "cache": false
+    },
+    "desktop:dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "core:build",
+        "infra:build",
+        "image-vision:build"
+      ]
+    },
+    "android:dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "core:build",
+        "infra:build",
+        "image-vision:build"
+      ]
+    },
+    "ios:dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": [
+        "core:build",
+        "infra:build",
+        "image-vision:build"
+      ]
+    },
+    "lint": {
+      "dependsOn": [
+        "^lint"
+      ]
     }
+  }
 }

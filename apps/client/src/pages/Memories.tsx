@@ -20,7 +20,7 @@ function MemoryCard({ memory, onClick }: { memory: Memory; onClick: () => void }
   return (
     <div
       onClick={onClick}
-      className="bg-card rounded-3xl overflow-hidden shadow-sm border border-border/50 hover:shadow-md transition-shadow cursor-pointer group flex flex-col"
+      className="bg-card h-full rounded-3xl overflow-hidden shadow-sm border border-border/50 hover:shadow-md transition-shadow cursor-pointer group flex flex-col"
     >
       {/* Media Grid Top */}
       <BentoMediaGrid mediaIds={memory.media_ids} />

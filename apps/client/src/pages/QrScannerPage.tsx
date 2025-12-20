@@ -18,6 +18,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
+import { cn } from "@/lib/utils";
 
 export function QrScannerPage() {
   const [error, setError] = useState<string | null>(null);
@@ -196,7 +197,10 @@ export function QrScannerPage() {
   };
 
   return (
-    <div className="flex flex-col">
+    <div className={cn(
+      isDesktop ? "pt-8" : "pt-0",
+      "flex flex-col"
+    )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-4 border-b">
         <Button variant="ghost" size="icon" onClick={handleBack}>
@@ -282,7 +286,7 @@ export function QrScannerPage() {
                 />
                 {isScanning && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-48 h-48 border-2 border-primary rounded-lg animate-pulse" />
+                    <div className="w-48 h-48 border-2 border-amber-500 ring-2 ring-amber-500/50 rounded-lg animate-pulse" />
                   </div>
                 )}
               </div>

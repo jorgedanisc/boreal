@@ -2,8 +2,10 @@ import { useTranslation } from "react-i18next";
 import { IconChevronLeft, IconLoader } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { importVault } from "@/lib/vault";
+import { type } from "@tauri-apps/plugin-os";
+import { cn } from "@/lib/utils";
 
 interface ImportStepProps {
   onBack: () => void;
@@ -15,6 +17,17 @@ export function ImportStep({ onBack, onComplete }: ImportStepProps) {
   const [vaultCode, setVaultCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    // Check if we are running in a desktop environment (Tauri)
+    // and if the OS is one of the target desktop platforms.
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+  }, []);
 
   const handleContinue = async () => {
     if (!vaultCode.trim()) return;
@@ -37,7 +50,10 @@ export function ImportStep({ onBack, onComplete }: ImportStepProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className={cn(
+      "min-h-screen bg-background flex flex-col",
+      isDesktop ? "pt-8" : "pt-0",
+    )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-2">
         <Button variant="ghost" size="icon" onClick={onBack}>

@@ -124,7 +124,7 @@ function GalleryLayout() {
                   <ShareVaultDialog
                     vaultId={activeVault.id}
                     trigger={
-                      <Button variant="ghost" className="h-9 w-9 p-0 rounded-full bg-white/10 border-white/10 hover:bg-white/20 backdrop-blur-md">
+                      <Button variant="glass" className="h-9 w-9 p-0 rounded-full">
                         <ShareIcon className="w-5 h-5 text-foreground" />
                       </Button>
                     }
@@ -132,7 +132,7 @@ function GalleryLayout() {
                 )}
 
                 <UploadTrigger>
-                  <Button className="rounded-full px-5 font-semibold bg-secondary/60 text-secondary-foreground hover:bg-secondary/90 transition-colors backdrop-blur-2xl border border-white/10 shadow-2xl">
+                  <Button variant="glass" className="rounded-full px-5 font-medium">
                     Upload
                   </Button>
                 </UploadTrigger>
@@ -155,9 +155,9 @@ function GalleryLayout() {
                 <Button
                   onClick={openMemoryEditor}
                   size="icon"
-                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-all"
+                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 backdrop-blur-3xl transition-all"
                 >
-                  <Plus className="w-5 h-5" />
+                  <Plus className="size-5" />
                 </Button>
               )}
             </div>
