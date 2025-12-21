@@ -76,7 +76,8 @@ struct PairingSession {
     verification_code: Option<String>,
     vault_config_json: Option<String>,     // Only used by sender
     received_vault_config: Option<String>, // Only used by receiver
-    confirmed: bool,
+    receiver_confirmed: bool,              // Receiver has confirmed codes match
+    sender_confirmed: bool,                // Sender has confirmed codes match
 }
 
 impl PairingSession {
@@ -96,7 +97,8 @@ impl PairingSession {
             verification_code: None,
             vault_config_json: None,
             received_vault_config: None,
-            confirmed: false,
+            receiver_confirmed: false,
+            sender_confirmed: false,
         }
     }
 
@@ -211,6 +213,8 @@ impl PairingManager {
     // ========================
 
     pub async fn start_listening(&self) -> Result<()> {
+        log::info!("[Pairing] Starting listening mode...");
+
         // Clean up any existing session first
         self.stop_listening().await;
 
@@ -218,16 +222,22 @@ impl PairingManager {
         {
             let mut session = self.session.lock().await;
             *session = Some(PairingSession::new());
+            log::info!("[Pairing] Session created");
         }
 
         // Start mDNS broadcast
+        log::info!("[Pairing] Starting mDNS broadcast...");
         if let Err(e) = self.start_mdns_broadcast().await {
+            log::info!("[Pairing] mDNS broadcast failed: {}", e);
             self.set_error(format!("Failed to start mDNS: {}", e)).await;
             return Err(e);
         }
+        log::info!("[Pairing] mDNS broadcast started successfully");
 
         // Start HTTP server - this is the critical part that can fail with "address in use"
+        log::info!("[Pairing] Starting HTTP server on port {}...", PAIRING_PORT);
         if let Err(e) = self.start_pairing_server().await {
+            log::info!("[Pairing] HTTP server failed: {}", e);
             self.set_error(format!("Failed to start server: {}", e))
                 .await;
             // Clean up mDNS since server failed
@@ -236,8 +246,10 @@ impl PairingManager {
             }
             return Err(e);
         }
+        log::info!("[Pairing] HTTP server started successfully");
 
         self.set_state(PairingState::Listening).await;
+        log::info!("[Pairing] Now listening for connections");
 
         // Start timeout
         let status = self.status.clone();
@@ -277,14 +289,23 @@ impl PairingManager {
                 .unwrap_or_default()
         };
 
+        // Generate a valid hostname for mDNS (must be a valid DNS name, not an IP)
+        let instance_name = format!("boreal-{}", &session_id[..8]);
+        let hostname = format!("{}.local.", instance_name);
+
+        log::info!(
+            "[mDNS] Registering service: instance={}, hostname={}, ip={}, port={}",
+            instance_name, hostname, local_ip, PAIRING_PORT
+        );
+
         let mut txt_properties = HashMap::new();
         txt_properties.insert("name".to_string(), self.device_name.clone());
         txt_properties.insert("session".to_string(), session_id.clone());
 
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
-            &format!("boreal-{}", &session_id[..8]),
-            &format!("{}.local.", local_ip),
+            &instance_name,
+            &hostname,
             local_ip.to_string(),
             PAIRING_PORT,
             txt_properties,
@@ -312,6 +333,7 @@ impl PairingManager {
         let router = Router::new()
             .route("/initiate", post(handle_initiate))
             .route("/status", get(handle_status))
+            .route("/sender-confirm", post(handle_sender_confirm))
             .route("/transfer", post(handle_transfer))
             .with_state(app_state);
 
@@ -334,7 +356,7 @@ impl PairingManager {
                 })
                 .await
             {
-                eprintln!("[Pairing] Server error: {}", e);
+                log::info!("[Pairing] Server error: {}", e);
                 let mut s = status_for_task.write().await;
                 s.state = PairingState::Error;
                 s.error = Some(format!("Server error: {}", e));
@@ -344,10 +366,24 @@ impl PairingManager {
         Ok(())
     }
 
+    /// Receiver confirms that the verification codes match
     pub async fn confirm_pairing(&self) -> Result<()> {
         let mut session = self.session.lock().await;
         if let Some(ref mut s) = *session {
-            s.confirmed = true;
+            s.receiver_confirmed = true;
+            // Don't transition to Transferring yet - wait for sender confirmation too
+            // Status will show "Waiting for other device"
+            Ok(())
+        } else {
+            Err(anyhow!("No active session"))
+        }
+    }
+
+    /// Sender confirms that the verification codes match (used on sender device)
+    pub async fn confirm_as_sender(&self) -> Result<()> {
+        let mut session = self.session.lock().await;
+        if let Some(ref mut s) = *session {
+            s.sender_confirmed = true;
             self.set_state(PairingState::Transferring).await;
             Ok(())
         } else {
@@ -386,6 +422,11 @@ impl PairingManager {
         let mdns = ServiceDaemon::new()?;
         let receiver = mdns.browse(SERVICE_TYPE)?;
 
+        log::info!(
+            "[mDNS] Starting discovery for service type: {}",
+            SERVICE_TYPE
+        );
+
         *self.mdns.lock().await = Some(mdns);
         self.set_state(PairingState::Discovering).await;
 
@@ -394,7 +435,23 @@ impl PairingManager {
         tokio::spawn(async move {
             while let Ok(event) = receiver.recv() {
                 match event {
+                    ServiceEvent::SearchStarted(service_type) => {
+                        log::info!("[mDNS] Search started for: {}", service_type);
+                    }
+                    ServiceEvent::ServiceFound(service_type, fullname) => {
+                        log::info!(
+                            "[mDNS] Found service: {} (type: {})",
+                            fullname, service_type
+                        );
+                    }
                     ServiceEvent::ServiceResolved(info) => {
+                        log::info!(
+                            "[mDNS] Resolved service: {} at {:?}:{}",
+                            info.get_fullname(),
+                            info.get_addresses(),
+                            info.get_port()
+                        );
+
                         let id = info.get_fullname().to_string();
                         let name = info
                             .get_property_val_str("name")
@@ -409,10 +466,15 @@ impl PairingManager {
                                 port: info.get_port(),
                             };
 
+                            log::info!(
+                                "[mDNS] Adding device: {} at {}:{}",
+                                device.name, device.ip, device.port
+                            );
                             devices.write().await.insert(id, device);
                         }
                     }
                     ServiceEvent::ServiceRemoved(_, fullname) => {
+                        log::info!("[mDNS] Removed service: {}", fullname);
                         devices.write().await.remove(&fullname);
                     }
                     _ => {}
@@ -485,7 +547,9 @@ impl PairingManager {
 
         *self.session.lock().await = Some(session);
 
-        // Poll for confirmation, then transfer
+        // Sender-side: Wait for user confirmation, then poll until both confirmed, then transfer
+        // Note: The frontend will call confirm_pairing_as_sender() when user taps "Match"
+        // This spawned task waits for that confirmation, sends it to receiver, and transfers
         let session = self.session.clone();
         let status = self.status.clone();
         let device_ip = device.ip.clone();
@@ -494,9 +558,33 @@ impl PairingManager {
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let status_url = format!("http://{}:{}/status", device_ip, device_port);
+            let sender_confirm_url = format!("http://{}:{}/sender-confirm", device_ip, device_port);
             let transfer_url = format!("http://{}:{}/transfer", device_ip, device_port);
 
-            // Poll status until confirmed
+            // Wait for local sender confirmation (set by confirm_pairing_as_sender)
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+                let session_guard = session.lock().await;
+                if let Some(ref s) = *session_guard {
+                    if s.sender_confirmed {
+                        break;
+                    }
+                } else {
+                    // Session cleared, abort
+                    return;
+                }
+            }
+
+            // Send confirmation to receiver
+            log::info!("[Pairing] Sender confirmed, notifying receiver...");
+            if let Err(e) = client.post(&sender_confirm_url).send().await {
+                log::info!("[Pairing] Failed to send sender confirmation: {}", e);
+                status.write().await.state = PairingState::Error;
+                return;
+            }
+
+            // Poll until both confirmed
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
@@ -510,7 +598,8 @@ impl PairingManager {
                     Err(_) => continue,
                 };
 
-                if status_resp.confirmed {
+                if status_resp.both_confirmed {
+                    log::info!("[Pairing] Both sides confirmed, transferring vault...");
                     // Transfer the vault config
                     let session_guard = session.lock().await;
                     if let Some(ref s) = *session_guard {
@@ -599,13 +688,41 @@ async fn handle_initiate(
 
 #[derive(Serialize, Deserialize)]
 struct StatusResponse {
-    confirmed: bool,
+    receiver_confirmed: bool,
+    sender_confirmed: bool,
+    both_confirmed: bool,
 }
 
 async fn handle_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let session = state.session.lock().await;
-    let confirmed = session.as_ref().map(|s| s.confirmed).unwrap_or(false);
-    Json(StatusResponse { confirmed })
+    let (receiver_confirmed, sender_confirmed) = session
+        .as_ref()
+        .map(|s| (s.receiver_confirmed, s.sender_confirmed))
+        .unwrap_or((false, false));
+    Json(StatusResponse {
+        receiver_confirmed,
+        sender_confirmed,
+        both_confirmed: receiver_confirmed && sender_confirmed,
+    })
+}
+
+/// Sender confirms that the verification codes match
+async fn handle_sender_confirm(
+    State(state): State<AppState>,
+) -> Result<Json<StatusResponse>, StatusCode> {
+    let mut session = state.session.lock().await;
+    if let Some(ref mut s) = *session {
+        s.sender_confirmed = true;
+        let receiver_confirmed = s.receiver_confirmed;
+        let sender_confirmed = s.sender_confirmed;
+        Ok(Json(StatusResponse {
+            receiver_confirmed,
+            sender_confirmed,
+            both_confirmed: receiver_confirmed && sender_confirmed,
+        }))
+    } else {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -625,7 +742,8 @@ async fn handle_transfer(
     let mut session = state.session.lock().await;
 
     if let Some(ref mut s) = *session {
-        if !s.confirmed {
+        // Both sides must have confirmed before transfer is allowed
+        if !s.receiver_confirmed || !s.sender_confirmed {
             return Err(StatusCode::FORBIDDEN);
         }
 

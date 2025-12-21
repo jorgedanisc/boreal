@@ -8,6 +8,7 @@ mod manifest;
 pub mod media_processor;
 mod memories;
 mod pairing;
+mod qr_transfer;
 mod storage;
 mod upload_manager;
 mod vault;
@@ -39,6 +40,10 @@ struct UploadManagerState {
 
 struct PairingManagerState {
     manager: Arc<Mutex<Option<pairing::PairingManager>>>,
+}
+
+struct QrTransferManagerState {
+    manager: Arc<qr_transfer::QrTransferManager>,
 }
 
 // Commands
@@ -133,9 +138,10 @@ async fn load_vault(
         db::set_metadata(&conn, "visits", &legacy_visits.to_string())
             .map_err(|e| format!("Migration failed (visits): {}", e))?;
 
-        eprintln!(
+        log::info!(
             "[Migration] Moved name='{}' and visits={} to SQLite",
-            legacy_name, legacy_visits
+            legacy_name,
+            legacy_visits
         );
     }
 
@@ -156,7 +162,7 @@ async fn load_vault(
     *state.db.lock().await = Some(conn);
     *state.config.lock().await = Some(config);
 
-    // 9. Background: Download and merge manifest from S3
+    // 9. Background: Download and merge manifest from S3, then push updates
     // (This is done async after returning to not block UI)
     let storage_clone = state.storage.lock().await.clone();
     let db_clone = state.db.clone();
@@ -164,8 +170,19 @@ async fn load_vault(
 
     tokio::spawn(async move {
         if let (Some(storage), Some(config)) = (storage_clone, config_clone) {
-            if let Err(e) = sync_manifest_download_internal(&storage, &db_clone, &config).await {
-                eprintln!("[Manifest Sync] Background download failed: {}", e);
+            // 1. Pull latest from cloud
+            match sync_manifest_download_internal(&storage, &db_clone, &config).await {
+                Ok(_) => {
+                    // 2. Push our updated state (new visits count + merged changes) to cloud
+                    if let Err(e) =
+                        sync_manifest_upload_internal(&storage, &db_clone, &config).await
+                    {
+                        log::info!("[Manifest Sync] Background upload failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    log::info!("[Manifest Sync] Background download failed: {}", e);
+                }
             }
         }
     });
@@ -213,7 +230,7 @@ async fn delete_vault(
         // Actually, if cloud deletion fails, maybe we should stop and tell user?
         // But then they are stuck. Let's try and if fail, return error.
 
-        eprintln!("[Delete Vault] Emptying bucket {}...", config.bucket);
+        log::info!("[Delete Vault] Emptying bucket {}...", config.bucket);
         if let Err(e) = storage.empty_bucket().await {
             return Err(format!(
                 "Failed to empty S3 bucket: {}. Manual cleanup required.",
@@ -221,14 +238,14 @@ async fn delete_vault(
             ));
         }
 
-        eprintln!("[Delete Vault] Deleting bucket {}...", config.bucket);
+        log::info!("[Delete Vault] Deleting bucket {}...", config.bucket);
         if let Err(e) = storage.delete_bucket().await {
             // If we emptied it but failed to delete bucket (e.g. permission), warn but proceed?
             // User prompt said "basically what we want to do is just delete it and also delete the aws resources"
             // If we fail here, the vault is still in the list.
             // Given the permission limitation (legacy stacks), we might want to be lenient here
             // IF the error is AccessDenied.
-            eprintln!(
+            log::info!(
                 "[Delete Vault] Failed to delete bucket (might be permission issue): {}",
                 e
             );
@@ -269,6 +286,53 @@ async fn delete_vault(
     Ok(())
 }
 
+/// Step 1: Save vault credentials to encrypted store (returns vault ID)
+#[tauri::command]
+async fn import_vault_step1_save(app: AppHandle, vault_code: String) -> Result<String, String> {
+    // Parse JSON payload
+    let mut config: VaultConfig =
+        serde_json::from_str(&vault_code).map_err(|e| format!("Invalid vault code: {}", e))?;
+
+    // Ensure config has an ID
+    if config.id.is_empty() {
+        config.id = uuid::Uuid::new_v4().to_string();
+    }
+
+    // Set default name
+    if config.name.is_none() {
+        config.name = Some("Imported Vault".to_string());
+    }
+
+    // Save to encrypted store
+    store::save_vault(&app, &config)
+        .map_err(|e| format!("Failed to save vault credentials: {}", e))?;
+
+    Ok(config.id)
+}
+
+/// Step 2: Activate vault (load DB, initialize storage)
+#[tauri::command]
+async fn import_vault_step2_load(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
+    vault_id: String,
+) -> Result<(), String> {
+    load_vault(app, state, cache_state, vault_id)
+        .await
+        .map_err(|e| format!("Failed to activate vault: {}", e))
+}
+
+/// Step 3: Sync manifest from S3 (STRICT - fails if no manifest)
+#[tauri::command]
+async fn import_vault_step3_sync(state: State<'_, AppState>) -> Result<String, String> {
+    sync_manifest_download_strict(state)
+        .await
+        .map_err(|e| format!("Failed to sync from cloud: {}", e))?;
+
+    Ok("Sync complete".to_string())
+}
+
 #[tauri::command]
 async fn import_vault(
     app: AppHandle,
@@ -276,13 +340,21 @@ async fn import_vault(
     cache_state: State<'_, CacheState>,
     vault_code: String,
 ) -> Result<(), String> {
+    log::info!("[Import] Starting vault import...");
+
     // Parse JSON payload
     let mut config: VaultConfig =
         serde_json::from_str(&vault_code).map_err(|e| format!("Invalid vault code: {}", e))?;
+    log::info!(
+        "[Import] Parsed config. ID: {}, Bucket: {}",
+        config.id,
+        config.bucket
+    );
 
     // Ensure config has an ID; generate one if missing (legacy Vault Files may not have IDs)
     if config.id.is_empty() {
         config.id = uuid::Uuid::new_v4().to_string();
+        log::info!("[Import] Generated new ID: {}", config.id);
     }
 
     // Set default name for migration (will be written to SQLite on load)
@@ -290,11 +362,36 @@ async fn import_vault(
         config.name = Some("Imported Vault".to_string());
     }
 
-    // Save to JSON store
-    store::save_vault(&app, &config)?;
+    // Save to encrypted store
+    log::info!("[Import] Saving to encrypted store...");
+    store::save_vault(&app, &config).map_err(|e| {
+        log::info!("[Import] FAILED to save vault: {}", e);
+        format!("Failed to save vault credentials: {}", e)
+    })?;
+    log::info!("[Import] Vault saved successfully.");
 
-    // Activate
-    load_vault(app, state, cache_state, config.id).await
+    let id = config.id.clone();
+
+    // Activate vault (loads DB, sets up storage)
+    log::info!("[Import] Activating vault (load_vault)...");
+    load_vault(app, state.clone(), cache_state, id)
+        .await
+        .map_err(|e| {
+            log::info!("[Import] FAILED to activate vault: {}", e);
+            format!("Failed to activate vault: {}", e)
+        })?;
+    log::info!("[Import] Vault activated successfully.");
+
+    // STRICT SYNC: For imported vaults, manifest MUST exist on S3
+    // This validates credentials and downloads the photo database
+    log::info!("[Import] Syncing manifest from S3 (STRICT mode)...");
+    sync_manifest_download_strict(state).await.map_err(|e| {
+        log::info!("[Import] FAILED to sync manifest: {}", e);
+        format!("Failed to sync from cloud: {}", e)
+    })?;
+    log::info!("[Import] Manifest sync completed successfully!");
+
+    Ok(())
 }
 
 /// Internal function to download and merge manifest from S3
@@ -310,7 +407,7 @@ async fn sync_manifest_download_internal(
         Ok(bytes) => bytes,
         Err(e) => {
             // No manifest exists yet - this is fine for new vaults
-            eprintln!("[Manifest Sync] No manifest found on S3 ({})", e);
+            log::info!("[Manifest Sync] No manifest found on S3 ({})", e);
             return Ok(());
         }
     };
@@ -331,22 +428,92 @@ async fn sync_manifest_download_internal(
     if let Some(conn) = db_guard.as_ref() {
         let stats = manifest::import_manifest(conn, remote_data)
             .map_err(|e| format!("Failed to merge manifest: {}", e))?;
-        eprintln!(
+        log::info!(
             "[Manifest Sync] Merged: {} photos added, {} updated; {} memories added, {} updated",
-            stats.photos_added, stats.photos_updated, stats.memories_added, stats.memories_updated
+            stats.photos_added,
+            stats.photos_updated,
+            stats.memories_added,
+            stats.memories_updated
         );
     }
 
     Ok(())
 }
 
-/// Upload current manifest to S3
-#[tauri::command]
-async fn sync_manifest_upload(state: State<'_, AppState>) -> Result<(), String> {
+/// STRICT manifest sync for imported vaults - FAILS if manifest doesn't exist
+/// Unlike the lenient sync_manifest_download, this validates that the vault
+/// actually has data on S3 (which it should, since it's being imported from another device)
+async fn sync_manifest_download_strict(state: State<'_, AppState>) -> Result<(), String> {
     use crate::manifest;
 
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard
+        .as_ref()
+        .ok_or("Storage not initialized")?
+        .clone();
+    drop(storage_guard);
+
     let config_guard = state.config.lock().await;
-    let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?.clone();
+    drop(config_guard);
+
+    log::info!("[Strict Sync] Downloading manifest from S3...");
+
+    // STRICT: Fail if manifest doesn't exist (imported vaults MUST have a manifest)
+    let enc_bytes = storage
+        .download_file(manifest::MANIFEST_S3_KEY)
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to download manifest from S3: {}. Check AWS credentials or network.",
+                e
+            )
+        })?;
+
+    log::info!(
+        "[Strict Sync] Downloaded {} bytes, decrypting...",
+        enc_bytes.len()
+    );
+
+    // Decrypt
+    let vault_key = BASE64
+        .decode(&config.vault_key)
+        .map_err(|e| format!("Invalid vault key: {}", e))?;
+    let key_arr: [u8; 32] = vault_key
+        .try_into()
+        .map_err(|_| "Invalid key length".to_string())?;
+
+    let remote_data = manifest::decrypt_manifest(&enc_bytes, &key_arr)
+        .map_err(|e| format!("Failed to decrypt manifest: {}", e))?;
+
+    log::info!("[Strict Sync] Decrypted successfully, merging into local DB...");
+
+    // Merge into local DB
+    let db_guard = state.db.lock().await;
+    if let Some(conn) = db_guard.as_ref() {
+        let stats = manifest::import_manifest(conn, remote_data)
+            .map_err(|e| format!("Failed to merge manifest: {}", e))?;
+        log::info!(
+            "[Strict Sync] Merged: {} photos added, {} updated; {} memories added, {} updated",
+            stats.photos_added,
+            stats.photos_updated,
+            stats.memories_added,
+            stats.memories_updated
+        );
+    } else {
+        return Err("Database not initialized".to_string());
+    }
+
+    Ok(())
+}
+
+/// Internal function to export, encrypt, and upload manifest to S3
+async fn sync_manifest_upload_internal(
+    storage: &Storage,
+    db: &Arc<Mutex<Option<Connection>>>,
+    config: &VaultConfig,
+) -> Result<(), String> {
+    use crate::manifest;
 
     let vault_key = BASE64
         .decode(&config.vault_key)
@@ -356,27 +523,36 @@ async fn sync_manifest_upload(state: State<'_, AppState>) -> Result<(), String> 
         .map_err(|_| "Invalid key length".to_string())?;
 
     // Export from DB
-    let db_guard = state.db.lock().await;
+    let db_guard = db.lock().await;
     let conn = db_guard.as_ref().ok_or("DB not initialized")?;
     let data = manifest::export_manifest(conn).map_err(|e| format!("Export failed: {}", e))?;
+    drop(db_guard);
 
     // Encrypt
     let enc_bytes = manifest::encrypt_manifest(&data, &key_arr)
         .map_err(|e| format!("Encrypt failed: {}", e))?;
 
     // Upload
-    drop(db_guard);
-    drop(config_guard);
-
-    let storage_guard = state.storage.lock().await;
-    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
     storage
         .upload_file(manifest::MANIFEST_S3_KEY, enc_bytes)
         .await
         .map_err(|e| format!("Upload failed: {}", e))?;
 
-    eprintln!("[Manifest Sync] Uploaded manifest to S3");
+    log::info!("[Manifest Sync] Uploaded manifest to S3");
     Ok(())
+}
+
+/// Upload current manifest to S3
+#[tauri::command]
+async fn sync_manifest_upload(state: State<'_, AppState>) -> Result<(), String> {
+    let config_guard = state.config.lock().await;
+    let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+
+    // Use cloned references to pass to internal function
+    sync_manifest_upload_internal(storage, &state.db, config).await
 }
 
 /// Download and merge manifest from S3
@@ -698,7 +874,7 @@ async fn sync_thumbnail_cache(
         return Ok(0);
     }
 
-    eprintln!(
+    log::info!(
         "[Cache Sync] Found {} thumbnails missing from cache, fetching...",
         missing_ids.len()
     );
@@ -738,18 +914,18 @@ async fn sync_thumbnail_cache(
                         }
                     }
                     Err(e) => {
-                        eprintln!("[Cache Sync] Failed to decrypt thumbnail {}: {}", id, e);
+                        log::info!("[Cache Sync] Failed to decrypt thumbnail {}: {}", id, e);
                     }
                 }
             }
             Err(e) => {
                 // Thumbnail may not exist (audio files, or upload errors)
-                eprintln!("[Cache Sync] Failed to download thumbnail {}: {}", id, e);
+                log::info!("[Cache Sync] Failed to download thumbnail {}: {}", id, e);
             }
         }
     }
 
-    eprintln!(
+    log::info!(
         "[Cache Sync] Fetched and cached {} thumbnails",
         fetched_count
     );
@@ -851,18 +1027,29 @@ async fn decrypt_import(encrypted_data: String, pin: String) -> Result<String, S
         return Err("Invalid data length".to_string());
     }
 
-    // Extract Salt
-    let (salt, rest) = blob.split_at(16);
+    // Run CPU-intensive crypto operations in a blocking thread
+    // to prevent blocking the async runtime (critical for mobile)
+    let result = tokio::task::spawn_blocking(move || {
+        // Extract Salt
+        let (salt, rest) = blob.split_at(16);
 
-    // Derive Key using Argon2id (Slow verify)
-    let key = crypto::derive_key(&pin, salt).map_err(|e| e.to_string())?;
+        // Derive Key using Argon2id (Slow - intentionally expensive)
+        log::info!("[Decrypt] Starting Argon2 key derivation...");
+        let key = crypto::derive_key(&pin, salt).map_err(|e| e.to_string())?;
+        log::info!("[Decrypt] Key derivation complete, decrypting...");
 
-    // Decrypt (rest contains Nonce + Ciphertext, which crypto::decrypt expects)
-    let plaintext = crypto::decrypt(rest, &key)
-        .map_err(|_| "Decryption failed. Wrong PIN or Corrupted Data.".to_string())?;
+        // Decrypt (rest contains Nonce + Ciphertext, which crypto::decrypt expects)
+        let plaintext = crypto::decrypt(rest, &key)
+            .map_err(|_| "Decryption failed. Wrong PIN or Corrupted Data.".to_string())?;
 
-    let json = String::from_utf8(plaintext).map_err(|e| e.to_string())?;
-    Ok(json)
+        let json = String::from_utf8(plaintext).map_err(|e| e.to_string())?;
+        log::info!("[Decrypt] Decryption successful");
+        Ok::<String, String>(json)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+
+    result
 }
 
 #[tauri::command]
@@ -1174,6 +1361,20 @@ async fn confirm_pairing(pairing_state: State<'_, PairingManagerState>) -> Resul
 }
 
 #[tauri::command]
+async fn confirm_pairing_as_sender(
+    pairing_state: State<'_, PairingManagerState>,
+) -> Result<(), String> {
+    let guard = pairing_state.manager.lock().await;
+    if let Some(manager) = guard.as_ref() {
+        manager
+            .confirm_as_sender()
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_pairing_status(
     pairing_state: State<'_, PairingManagerState>,
 ) -> Result<pairing::PairingStatus, String> {
@@ -1268,6 +1469,97 @@ async fn initiate_pairing(
     }
 }
 
+// === QR Transfer commands ===
+
+#[tauri::command]
+async fn create_import_request(
+    qr_state: State<'_, QrTransferManagerState>,
+) -> Result<qr_transfer::ImportRequest, String> {
+    qr_state
+        .manager
+        .create_import_request()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn start_qr_export(
+    app: AppHandle,
+    qr_state: State<'_, QrTransferManagerState>,
+    vault_id: String,
+    request_json: String,
+) -> Result<qr_transfer::ExportSession, String> {
+    let config = store::load_vault(&app, &vault_id)?;
+    let vault_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+    qr_state
+        .manager
+        .start_export(&request_json, &vault_json)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_export_frame(qr_state: State<'_, QrTransferManagerState>) -> Result<String, String> {
+    qr_state
+        .manager
+        .get_export_frame()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_export_sas(qr_state: State<'_, QrTransferManagerState>) -> Result<String, String> {
+    qr_state
+        .manager
+        .get_export_sas()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cancel_qr_export(qr_state: State<'_, QrTransferManagerState>) -> Result<(), String> {
+    qr_state.manager.cancel_export().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn submit_import_frame(
+    qr_state: State<'_, QrTransferManagerState>,
+    ur_string: String,
+) -> Result<qr_transfer::ImportProgress, String> {
+    qr_state
+        .manager
+        .submit_import_frame(&ur_string)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_import_progress(
+    qr_state: State<'_, QrTransferManagerState>,
+) -> Result<qr_transfer::ImportProgress, String> {
+    qr_state
+        .manager
+        .get_import_progress()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn complete_qr_import(qr_state: State<'_, QrTransferManagerState>) -> Result<String, String> {
+    qr_state
+        .manager
+        .complete_import()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cancel_qr_import(qr_state: State<'_, QrTransferManagerState>) -> Result<(), String> {
+    qr_state.manager.cancel_import().await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(desktop)]
@@ -1316,6 +1608,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info) // <--- Force Info level
+                .build(),
+        )
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(
@@ -1352,8 +1649,14 @@ pub fn run() {
         .manage(PairingManagerState {
             manager: Arc::new(Mutex::new(None)),
         })
+        .manage(QrTransferManagerState {
+            manager: Arc::new(qr_transfer::QrTransferManager::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             import_vault,
+            import_vault_step1_save,
+            import_vault_step2_load,
+            import_vault_step3_sync,
             bootstrap_vault,
             upload_photo,
             get_photos,
@@ -1395,12 +1698,23 @@ pub fn run() {
             start_pairing_mode,
             stop_pairing_mode,
             confirm_pairing,
+            confirm_pairing_as_sender,
             get_pairing_status,
             get_received_vault_config,
             start_network_discovery,
             stop_network_discovery,
             get_discovered_devices,
-            initiate_pairing
+            initiate_pairing,
+            // QR Transfer commands
+            create_import_request,
+            start_qr_export,
+            get_export_frame,
+            get_export_sas,
+            cancel_qr_export,
+            submit_import_frame,
+            get_import_progress,
+            complete_qr_import,
+            cancel_qr_import
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -17,7 +17,7 @@ export function CompleteStep({ onContinue }: CompleteStepProps) {
   ];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
+    <div className="flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md space-y-8 text-center">
         {/* Success Icon */}
         <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto">

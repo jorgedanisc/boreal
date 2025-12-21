@@ -87,18 +87,18 @@ pub mod store {
         let new_path = get_vaults_path(app)?;
 
         if legacy.exists() && !new_path.exists() {
-            println!("[Vault Migration] Found legacy vaults.json, migrating to Encrypted Store...");
+            log::info!("[Vault Migration] Found legacy vaults.json, migrating to Encrypted Store...");
             match fs::read_to_string(&legacy) {
                 Ok(content) => {
                     let vaults: Vec<VaultConfig> =
                         serde_json::from_str(&content).unwrap_or_default();
                     if !vaults.is_empty() {
                         write_all(app, &vaults)?;
-                        println!("[Vault Migration] Encrypted and saved. Rename legacy.");
+                        log::info!("[Vault Migration] Encrypted and saved. Rename legacy.");
                         fs::rename(&legacy, legacy.with_extension("json.bak")).ok();
                     }
                 }
-                Err(e) => eprintln!("[Vault Migration] Failed to read legacy: {}", e),
+                Err(e) => log::info!("[Vault Migration] Failed to read legacy: {}", e),
             }
         }
         Ok(())

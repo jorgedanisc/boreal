@@ -32,6 +32,7 @@ export function PairingPage() {
     error: null,
   });
   const [isDesktop, setIsDesktop] = useState(false);
+  const [receiverConfirmed, setReceiverConfirmed] = useState(false);
 
   useEffect(() => {
     const osType = type();
@@ -78,6 +79,7 @@ export function PairingPage() {
   const handleConfirm = useCallback(async () => {
     try {
       await confirmPairing();
+      setReceiverConfirmed(true); // Track that receiver has confirmed
     } catch (e) {
       console.error("Failed to confirm pairing:", e);
     }
@@ -97,6 +99,9 @@ export function PairingPage() {
       error: null,
     });
 
+    // Reset receiverConfirmed on retry
+    setReceiverConfirmed(false);
+
     // Stop any existing session and start fresh
     try {
       await stopPairingMode();
@@ -111,7 +116,7 @@ export function PairingPage() {
   return (
     <div className={cn(
       isDesktop ? "pt-8" : "pt-0",
-      "min-h-screen flex flex-col bg-background"
+      "flex flex-col"
     )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-3">
@@ -129,7 +134,7 @@ export function PairingPage() {
         <AnimatePresence mode="wait">
           {status.state === "idle" && <IdleState key="idle" />}
           {status.state === "listening" && <ListeningState key="listening" />}
-          {status.state === "verifying" && status.verification_code && (
+          {status.state === "verifying" && status.verification_code && !receiverConfirmed && (
             <VerifyingState
               key="verifying"
               code={status.verification_code}
@@ -137,6 +142,9 @@ export function PairingPage() {
               onConfirm={handleConfirm}
               onCancel={handleBack}
             />
+          )}
+          {status.state === "verifying" && receiverConfirmed && (
+            <WaitingForSenderState key="waiting" />
           )}
           {status.state === "transferring" && <TransferringState key="transferring" />}
           {status.state === "success" && <SuccessState key="success" />}
@@ -280,6 +288,36 @@ function TransferringState() {
       <div className="text-center space-y-1">
         <h2 className="text-base font-medium">Receiving vault</h2>
         <p className="text-xs text-muted-foreground">Transferring encrypted data...</p>
+      </div>
+    </motion.div>
+  );
+}
+
+function WaitingForSenderState() {
+  return (
+    <motion.div
+      className="flex flex-col items-center gap-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <IconLoader2 className="w-6 h-6 text-primary animate-spin" />
+      <div className="text-center space-y-1">
+        <h2 className="text-base font-medium">Waiting for other device...</h2>
+        <p className="text-xs text-muted-foreground">
+          The other device needs to confirm the codes match
+        </p>
+      </div>
+
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full"
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity }}
+          />
+        ))}
       </div>
     </motion.div>
   );

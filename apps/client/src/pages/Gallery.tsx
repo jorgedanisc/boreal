@@ -203,7 +203,7 @@ export default function Gallery() {
   return (
     <div className="text-foreground flex flex-col h-screen bg-background relative overflow-hidden">
       {/* Main Content - grid fills entire screen */}
-      <main className="absolute inset-0">
+      <main className="fixed inset-0">
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
@@ -217,7 +217,7 @@ export default function Gallery() {
             items={mediaItems}
             columns={4}
             spacing={GRID_SPACING}
-            paddingTop={isDesktop ? 120 : 100}
+            paddingTop={isDesktop ? 120 : 150}
             paddingBottom={100}
             onItemClick={handleItemClick}
             onScrollPositionChange={handleScrollPositionChange}

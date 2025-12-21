@@ -79,6 +79,31 @@ export async function importVault(vaultCode: string): Promise<void> {
   }
 }
 
+// Step-by-step import for debugging
+export async function importVaultStep1Save(vaultCode: string): Promise<string> {
+  try {
+    return await invoke('import_vault_step1_save', { vaultCode });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+export async function importVaultStep2Load(vaultId: string): Promise<void> {
+  try {
+    await invoke('import_vault_step2_load', { vaultId });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+export async function importVaultStep3Sync(): Promise<string> {
+  try {
+    return await invoke('import_vault_step3_sync');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
 export async function bootstrapVault(vaultCode: string): Promise<void> {
   try {
     await invoke('bootstrap_vault', { vaultCode });

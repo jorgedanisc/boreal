@@ -17,7 +17,7 @@ const Setup = () => {
   }, []);
   return <div className={cn(
     isDesktop ? "pt-8" : "pt-0",
-    "flex flex-col min-h-screen bg-background relative"
+    "flex flex-col relative"
   )}>
     <SetupWizard />
   </div>

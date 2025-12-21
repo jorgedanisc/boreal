@@ -65,7 +65,7 @@ impl Transcoder for TauriTranscoder {
     async fn run_ffmpeg(&self, args: &[String]) -> Result<Vec<u8>> {
         use tauri_plugin_shell::ShellExt;
 
-        println!("Executing Sidecar FFmpeg command with args: {:?}", args);
+        log::info!("Executing Sidecar FFmpeg command with args: {:?}", args);
 
         let output_path = args.last().unwrap();
 
@@ -81,7 +81,7 @@ impl Transcoder for TauriTranscoder {
 
         if !output_result.status.success() {
             let stderr = String::from_utf8_lossy(&output_result.stderr);
-            println!("FFmpeg Sidecar stderr: {}", stderr);
+            log::info!("FFmpeg Sidecar stderr: {}", stderr);
             return Err(anyhow::anyhow!("FFmpeg transcode failed: {}", stderr));
         }
 
@@ -114,7 +114,7 @@ pub struct SystemTranscoder;
 #[async_trait::async_trait]
 impl Transcoder for SystemTranscoder {
     async fn run_ffmpeg(&self, args: &[String]) -> Result<Vec<u8>> {
-        println!("Executing System FFmpeg command with args: {:?}", args);
+        log::info!("Executing System FFmpeg command with args: {:?}", args);
 
         let output_path = args.last().unwrap();
 
@@ -125,7 +125,7 @@ impl Transcoder for SystemTranscoder {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            println!("FFmpeg System stderr: {}", stderr);
+            log::info!("FFmpeg System stderr: {}", stderr);
             return Err(anyhow::anyhow!("FFmpeg transcode failed: {}", stderr));
         }
 
@@ -195,7 +195,7 @@ fn parse_ffmpeg_stderr(stderr: &str) -> Result<VideoMetadata> {
 
     if width == 0 || height == 0 {
         // Fallback or warning?
-        println!("Warning: Could not parse video dimensions from ffmpeg output");
+        log::info!("Warning: Could not parse video dimensions from ffmpeg output");
     }
 
     Ok(VideoMetadata {
@@ -291,7 +291,7 @@ pub async fn process_video(
     let thumbnail_bytes = match transcoder.run_ffmpeg(&thumb_args).await {
         Ok(bytes) => Some(bytes),
         Err(e) => {
-            println!("Failed to generate video thumbnail: {}", e);
+            log::info!("Failed to generate video thumbnail: {}", e);
             None
         }
     };

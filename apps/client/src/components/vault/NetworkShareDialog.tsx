@@ -21,6 +21,7 @@ import {
   getDiscoveredDevices,
   initiatePairing,
   getPairingStatus,
+  confirmPairingAsSender,
   type DiscoveredDevice,
   type PairingStatus,
 } from "@/lib/pairing";
@@ -31,7 +32,7 @@ interface NetworkShareDialogProps {
   vaultId: string;
 }
 
-type DialogState = "discovering" | "connecting" | "verifying" | "success" | "error";
+type DialogState = "discovering" | "connecting" | "verifying" | "waiting" | "success" | "error";
 
 export function NetworkShareDialog({
   open,
@@ -91,6 +92,9 @@ export function NetworkShareDialog({
 
         if (status.state === "verifying") {
           setState("verifying");
+        } else if (status.state === "transferring") {
+          // Sender confirmed, now waiting for transfer completion
+          setState("waiting");
         } else if (status.state === "success") {
           setState("success");
         } else if (status.state === "error") {
@@ -118,6 +122,17 @@ export function NetworkShareDialog({
     }
   }, [vaultId]);
 
+  const handleSenderConfirm = useCallback(async () => {
+    try {
+      await confirmPairingAsSender();
+      setState("waiting");
+    } catch (e) {
+      console.error("Failed to confirm pairing:", e);
+      setError(String(e));
+      setState("error");
+    }
+  }, []);
+
   const handleClose = useCallback(async () => {
     await stopNetworkDiscovery().catch(console.error);
     onOpenChange(false);
@@ -144,12 +159,18 @@ export function NetworkShareDialog({
             )}
 
             {(state === "connecting" || state === "verifying") && (
-              <ConnectingContent
-                key="connecting"
+              <VerifyingContent
+                key="verifying"
                 deviceName={selectedDevice?.name}
                 verificationCode={pairingStatus?.verification_code}
-                isVerifying={state === "verifying"}
+                isConnecting={state === "connecting"}
+                onConfirm={handleSenderConfirm}
+                onCancel={handleClose}
               />
+            )}
+
+            {state === "waiting" && (
+              <WaitingContent key="waiting" deviceName={selectedDevice?.name} />
             )}
 
             {state === "success" && (
@@ -199,7 +220,7 @@ function DiscoveringContent({
       <div className="flex-1 space-y-1.5">
         {devices.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center py-6 text-center">
-            <IconDevices className="w-8 h-8 text-muted-foreground/30 mb-2" />
+            <IconDevices className="w-8 h-8 text-muted-foreground mb-2" />
             <p className="text-xs text-muted-foreground">No devices found</p>
             <p className="text-[10px] text-muted-foreground/60 mt-0.5">
               Make sure the other device has tapped "Pair Device"
@@ -231,14 +252,18 @@ function DiscoveringContent({
   );
 }
 
-function ConnectingContent({
+function VerifyingContent({
   deviceName,
   verificationCode,
-  isVerifying,
+  isConnecting,
+  onConfirm,
+  onCancel,
 }: {
   deviceName: string | undefined;
   verificationCode: string | null | undefined;
-  isVerifying: boolean;
+  isConnecting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   return (
     <motion.div
@@ -248,7 +273,7 @@ function ConnectingContent({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
     >
-      {isVerifying && verificationCode ? (
+      {!isConnecting && verificationCode ? (
         <>
           <div className="text-center space-y-0.5">
             <p className="text-xs text-muted-foreground">
@@ -274,18 +299,18 @@ function ConnectingContent({
           </div>
 
           <p className="text-[10px] text-muted-foreground text-center max-w-[200px]">
-            Waiting for the other device to confirm...
+            Confirm this matches the code on the other device
           </p>
 
-          <div className="flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <motion.div
-                key={i}
-                className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full"
-                animate={{ opacity: [0.3, 1, 0.3] }}
-                transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity }}
-              />
-            ))}
+          {/* Match / Cancel buttons */}
+          <div className="flex gap-2 w-full max-w-[200px]">
+            <Button variant="outline" onClick={onCancel} className="flex-1 h-9 text-xs">
+              Cancel
+            </Button>
+            <Button onClick={onConfirm} className="flex-1 h-9 text-xs">
+              <IconCheck className="w-3.5 h-3.5 mr-1.5" />
+              Match
+            </Button>
           </div>
         </>
       ) : (
@@ -296,6 +321,36 @@ function ConnectingContent({
           </p>
         </>
       )}
+    </motion.div>
+  );
+}
+
+function WaitingContent({ deviceName }: { deviceName: string | undefined }) {
+  return (
+    <motion.div
+      className="flex-1 flex flex-col items-center justify-center gap-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <IconLoader2 className="w-6 h-6 text-primary animate-spin" />
+      <div className="text-center space-y-1">
+        <p className="text-sm font-medium">Transferring vault...</p>
+        <p className="text-xs text-muted-foreground">
+          Sending encrypted data to {deviceName || "device"}
+        </p>
+      </div>
+
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full"
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity }}
+          />
+        ))}
+      </div>
     </motion.div>
   );
 }
@@ -369,7 +424,9 @@ function getDescription(state: DialogState): string {
     case "connecting":
       return "Establishing secure connection";
     case "verifying":
-      return "Waiting for confirmation";
+      return "Confirm codes match";
+    case "waiting":
+      return "Transferring vault data";
     case "success":
       return "Transfer complete";
     case "error":

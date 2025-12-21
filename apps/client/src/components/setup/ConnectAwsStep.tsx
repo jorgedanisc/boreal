@@ -76,7 +76,7 @@ export function ConnectAwsStep({ region, tier, onBack, onComplete }: ConnectAwsS
   ];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex flex-col">
       {/* Header */}
       <header className="p-4 flex items-center gap-2">
         <Button variant="ghost" size="icon" onClick={onBack}>

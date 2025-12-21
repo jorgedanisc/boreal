@@ -31,7 +31,7 @@ export function ConfigureStep({ onBack, onContinue }: ConfigureStepProps) {
   const regionsByContinent = useMemo(() => getRegionsByContinent(), []);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex flex-col">
       {/* Header */}
       <header className="p-4 flex items-center gap-2">
         <Button variant="ghost" size="icon" onClick={onBack}>
@@ -123,7 +123,7 @@ export function ConfigureStep({ onBack, onContinue }: ConfigureStepProps) {
 
                       {/* Content */}
                       <div className="flex-1 min-w-0 space-y-1">
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-row items-start justify-between gap-2">
                           <span className={cn(
                             "font-semibold transition-colors",
                             isSelected ? "text-foreground" : "text-foreground/90"

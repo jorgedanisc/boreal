@@ -128,6 +128,18 @@ export async function getDiscoveredDevices(): Promise<DiscoveredDevice[]> {
 }
 
 /**
+ * Sender confirms the verification codes match.
+ * Call this when the user taps "Match" on the sending device.
+ */
+export async function confirmPairingAsSender(): Promise<void> {
+  try {
+    await invoke('confirm_pairing_as_sender');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
  * Initiate pairing with a discovered device.
  * @param deviceId - The ID of the discovered device
  * @param vaultId - The ID of the vault to share
@@ -139,3 +151,4 @@ export async function initiatePairing(deviceId: string, vaultId: string): Promis
     throw new Error(String(e));
   }
 }
+

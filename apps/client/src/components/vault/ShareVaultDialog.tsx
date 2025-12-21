@@ -7,14 +7,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { createExportQr, exportVault, authenticateBiometrics } from "@/lib/vault";
-import { IconCheck, IconCopy, IconPrinter, IconQrcode, IconDevices } from "@tabler/icons-react";
+import { IconPrinter, IconQrcode, IconDevices, IconShieldLock } from "@tabler/icons-react";
 import { useState } from "react";
-import QRCode from "react-qr-code";
 import { RecoveryKit } from "./RecoveryKit";
 import { Spinner } from "@/components/ui/spinner";
 import { PrintPortal } from "@/components/ui/print-portal";
 import { NetworkShareDialog } from "./NetworkShareDialog";
+
+import { useNavigate } from "@tanstack/react-router";
+import { exportVault, authenticateBiometrics } from "@/lib/vault";
 
 interface ShareVaultDialogProps {
   vaultId: string;
@@ -23,45 +24,19 @@ interface ShareVaultDialogProps {
 
 export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [exportData, setExportData] = useState<{ qr_url: string; pin: string } | null>(null);
+  const navigate = useNavigate();
 
   // Data for printing only
   const [recoveryCode, setRecoveryCode] = useState<string>("");
   const [printing, setPrinting] = useState(false);
-
-  const [copied, setCopied] = useState(false);
   const [showNetworkShare, setShowNetworkShare] = useState(false);
-
-  const generateCode = async () => {
-    setLoading(true);
-    try {
-      const data = await createExportQr(vaultId);
-      setExportData(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
-    if (open && !exportData) {
-      generateCode();
-    }
-  };
-
-  const handleCopy = async () => {
-    if (exportData) {
-      await navigator.clipboard.writeText(exportData.qr_url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
   };
 
   const handlePrint = async () => {
-    if (!exportData) return;
+    // if (!exportData) return; // Removed logic
     setPrinting(true);
     try {
       // 1. Enforce Biometric/Password Authentication
@@ -115,97 +90,79 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col items-center py-4 space-y-5">
-            {loading ? (
-              <div className="flex flex-col items-center gap-2 py-8">
-                <Spinner className="w-6 h-6 text-primary" />
-                <p className="text-xs text-muted-foreground">Generating credentials...</p>
+          <div className="flex flex-col gap-3 py-4">
+            {/* New QR Export Flow */}
+            <Button
+              variant="outline"
+              className="h-auto py-3 px-4 justify-start gap-3 hover:bg-primary/5 hover:text-primary border-primary/20 group"
+              onClick={() => {
+                setIsOpen(false);
+                navigate({ to: "/qr-export/$vaultId", params: { vaultId } });
+              }}
+            >
+              <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+                <IconQrcode className="w-5 h-5 text-primary" />
               </div>
-            ) : exportData ? (
-              <>
-                {/* QR Code */}
-                <div className="bg-white p-3 rounded-xl">
-                  <QRCode
-                    value={exportData.qr_url}
-                    size={160}
-                    level="L"
-                  />
+              <div className="flex flex-col items-start gap-0.5">
+                <span className="text-sm font-medium">Export via QR Code</span>
+                <span className="text-[10px] text-muted-foreground">Scan on another device to transfer</span>
+              </div>
+            </Button>
+
+            {/* Network Share */}
+            <Button
+              variant="outline"
+              className="h-auto py-3 px-4 justify-start gap-3 hover:bg-blue-500/5 hover:text-blue-500 border-blue-500/20 group"
+              onClick={() => setShowNetworkShare(true)}
+            >
+              <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
+                <IconDevices className="w-5 h-5 text-blue-500" />
+              </div>
+              <div className="flex flex-col items-start gap-0.5">
+                <span className="text-sm font-medium">Share over Network</span>
+                <span className="text-[10px] text-muted-foreground">Pair devices on same Wi-Fi</span>
+              </div>
+            </Button>
+
+            {/* Recovery Kit - Separator */}
+            <div className="relative flex items-center w-full py-2">
+              <div className="flex-1 border-t border-border/50" />
+              <span className="px-2 text-[10px] text-muted-foreground/50 uppercase">Backup</span>
+              <div className="flex-1 border-t border-border/50" />
+            </div>
+
+            {/* Print Recovery Kit */}
+            <div className="space-y-2">
+              <Button
+                variant="ghost"
+                className="w-full h-auto py-3 px-4 justify-start gap-3 hover:bg-amber-500/5 hover:text-amber-600 group"
+                onClick={handlePrint}
+                disabled={printing}
+              >
+                <div className="p-2 bg-amber-500/10 rounded-lg group-hover:bg-amber-500/20 transition-colors">
+                  {printing ? <Spinner className="w-5 h-5 text-amber-600" /> : <IconPrinter className="w-5 h-5 text-amber-600" />}
                 </div>
-
-                {/* PIN Display */}
-                <div className="text-center space-y-1">
-                  <p className="text-[10px] uppercase text-muted-foreground/60 tracking-wider">
-                    Pairing PIN
-                  </p>
-                  <p className="text-2xl font-mono font-bold tracking-[0.15em]">
-                    {exportData.pin}
-                  </p>
+                <div className="flex flex-col items-start gap-0.5">
+                  <span className="text-sm font-medium">Print Recovery Kit</span>
+                  <span className="text-[10px] text-muted-foreground">Paper backup for emergencies</span>
                 </div>
-
-                {/* Divider */}
-                <div className="relative flex items-center w-full max-w-[200px]">
-                  <div className="flex-1 border-t border-border/50" />
-                  <span className="px-2 text-[10px] text-muted-foreground/60 uppercase">Or</span>
-                  <div className="flex-1 border-t border-border/50" />
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex flex-col gap-2 w-full max-w-[200px]">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-2 h-9 text-xs"
-                    onClick={() => setShowNetworkShare(true)}
-                  >
-                    <IconDevices className="w-3.5 h-3.5" />
-                    Share Over Network
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-2 h-9 text-xs"
-                    onClick={handleCopy}
-                  >
-                    {copied ? <IconCheck className="w-3.5 h-3.5" /> : <IconCopy className="w-3.5 h-3.5" />}
-                    {copied ? "Copied" : "Copy Link"}
-                  </Button>
-
-                  <div className="pt-2 space-y-1.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full gap-2 h-8 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
-                      onClick={handlePrint}
-                      disabled={printing}
-                    >
-                      {printing ? <Spinner className="w-3.5 h-3.5" /> : <IconPrinter className="w-3.5 h-3.5" />}
-                      Print Recovery Kit
-                    </Button>
-                    <p className="text-[9px] text-center text-muted-foreground/50 leading-tight">
-                      Contains sensitive recovery data
-                    </p>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-destructive">Failed to generate QR code</p>
-            )}
+              </Button>
+              <p className="text-[9px] text-center text-muted-foreground/40 px-4">
+                Contains your full vault access key. Store securely offline.
+              </p>
+            </div>
           </div>
         </DialogContent>
       </Dialog >
 
       {/* Hidden Recovery Kit for Printing */}
-      {
-        exportData && (
-          <PrintPortal>
-            <RecoveryKit
-              vaultName="My Boreal Vault"
-              rawCode={recoveryCode || "Loading..."}
-            />
-          </PrintPortal>
-        )
-      }
+      {/* Hidden Recovery Kit for Printing */}
+      <PrintPortal>
+        <RecoveryKit
+          vaultName="My Boreal Vault"
+          rawCode={recoveryCode || "Loading..."}
+        />
+      </PrintPortal>
 
       {/* Network Share Dialog */}
       <NetworkShareDialog

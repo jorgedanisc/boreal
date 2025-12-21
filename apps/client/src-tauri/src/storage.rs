@@ -36,13 +36,9 @@ pub struct Storage {
 
 impl Storage {
     pub async fn new(config: &VaultConfig) -> Self {
-        let region_provider = RegionProviderChain::first_try(Region::new(config.region.clone()));
-        let shared_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(region_provider)
-            .load()
-            .await;
-
-        // We need to use static credentials from the vault config
+        // Use explicit credentials directly - DO NOT use aws_config::defaults().load()
+        // The default credential chain tries to detect credentials from ENV/IMDS/etc
+        // which hangs on mobile platforms (no IMDS endpoint, timeouts, etc.)
         let credentials = aws_sdk_s3::config::Credentials::new(
             &config.access_key_id,
             &config.secret_access_key,
@@ -51,9 +47,37 @@ impl Storage {
             "boreal-vault",
         );
 
-        let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
-            .credentials_provider(credentials)
+        let region = Region::new(config.region.clone());
+
+        // Build HTTPS connector with WebPKI bundled root certificates
+        // This is REQUIRED for iOS/Android where native root certs aren't accessible to rustls
+        // The "webpki-tokio" feature in hyper-rustls uses bundled Mozilla CA certs
+        let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_webpki_roots()
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
             .build();
+
+        // Wrap connector for AWS SDK using the hyper_014 adapter
+        // Note: HyperClientBuilder::build expects the connector, not a full Client
+        let http_client = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
+            .build(https_connector);
+
+        // Build S3 config with our custom HTTP client
+        // Note: We disable stalled stream protection since we're using a custom HTTP client
+        // that doesn't integrate with AWS SDK's async sleep mechanism
+        let s3_config =
+            aws_sdk_s3::config::Builder::new()
+                .region(region)
+                .credentials_provider(credentials)
+                .behavior_version(BehaviorVersion::latest())
+                .http_client(http_client)
+                .stalled_stream_protection(
+                    aws_sdk_s3::config::StalledStreamProtectionConfig::disabled(),
+                )
+                .identity_cache(aws_sdk_s3::config::IdentityCache::no_cache())
+                .build();
 
         let client = Client::from_conf(s3_config);
 

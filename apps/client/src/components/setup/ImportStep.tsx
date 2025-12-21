@@ -51,7 +51,7 @@ export function ImportStep({ onBack, onComplete }: ImportStepProps) {
 
   return (
     <div className={cn(
-      "min-h-screen bg-background flex flex-col",
+      "bg-background flex flex-col",
       isDesktop ? "pt-8" : "pt-0",
     )}>
       {/* Header */}

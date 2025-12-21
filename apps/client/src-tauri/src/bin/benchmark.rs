@@ -18,7 +18,7 @@ const COST_S3_INSTANT: f64 = 0.004; // Additive to Standard for IR tier? No, it'
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Starting Compression Benchmark & Cost Analysis...");
+    log::info!("Starting Compression Benchmark & Cost Analysis...");
 
     // 1. Get Fixtures Directory from Args or Default
     let args: Vec<String> = env::args().collect();
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         PathBuf::from("../../.ci-fixtures/out")
     };
 
-    println!("Looking for test assets in: {:?}", fixtures_dir);
+    log::info!("Looking for test assets in: {:?}", fixtures_dir);
     if !fixtures_dir.exists() {
         return Err(anyhow::anyhow!(
             "Fixtures directory not found: {:?}. Please run .ci-fixtures/generate.sh first.",
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     // 4. Save Report
     let report_path = Path::new("compression_report.md");
     fs::write(report_path, report)?;
-    println!("Report generated at: {:?}", report_path.canonicalize()?);
+    log::info!("Report generated at: {:?}", report_path.canonicalize()?);
 
     Ok(())
 }
@@ -80,7 +80,7 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             continue;
         }
 
-        println!("Processing {}...", file_name);
+        log::info!("Processing {}...", file_name);
 
         // Determine type by extension
         let ext = path
@@ -105,13 +105,13 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             }
             "jpg" | "jpeg" | "png" | "webp" => (media_processor::process_image(&path), "Image"),
             _ => {
-                println!("Skipping unsupported file: {}", file_name);
+                log::info!("Skipping unsupported file: {}", file_name);
                 continue;
             }
         };
 
         if let Err(e) = processed {
-            println!("Failed to process {}: {}", file_name, e);
+            log::info!("Failed to process {}: {}", file_name, e);
             continue;
         }
         let processed = processed.unwrap();

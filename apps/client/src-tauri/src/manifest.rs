@@ -197,9 +197,14 @@ pub fn import_manifest(conn: &Connection, data: ManifestData) -> Result<MergeSta
     let merged_visits = std::cmp::max(local_visits, data.visits);
     db::set_metadata(conn, "visits", &merged_visits.to_string())?;
 
-    // Name: remote wins if local is empty
+    // Name: remote wins if local is empty OR if local is the default "Imported Vault"
     let local_name = db::get_metadata(conn, "name")?;
-    if local_name.is_none() || local_name.as_deref() == Some("") {
+    let should_update_name = match local_name.as_deref() {
+        None | Some("") | Some("Imported Vault") => true,
+        _ => false,
+    };
+
+    if should_update_name {
         db::set_metadata(conn, "name", &data.name)?;
     }
 

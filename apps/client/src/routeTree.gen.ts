@@ -17,6 +17,7 @@ import { Route as ImportRouteImport } from './routes/import'
 import { Route as GalleryRouteImport } from './routes/gallery'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GalleryIndexRouteImport } from './routes/gallery.index'
+import { Route as QrExportVaultIdRouteImport } from './routes/qr-export.$vaultId'
 import { Route as GalleryMemoriesIndexRouteImport } from './routes/gallery.memories.index'
 import { Route as GalleryMemoriesIdRouteImport } from './routes/gallery.memories.$id'
 
@@ -60,6 +61,11 @@ const GalleryIndexRoute = GalleryIndexRouteImport.update({
   path: '/',
   getParentRoute: () => GalleryRoute,
 } as any)
+const QrExportVaultIdRoute = QrExportVaultIdRouteImport.update({
+  id: '/qr-export/$vaultId',
+  path: '/qr-export/$vaultId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GalleryMemoriesIndexRoute = GalleryMemoriesIndexRouteImport.update({
   id: '/memories/',
   path: '/memories/',
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/scan': typeof ScanRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
+  '/qr-export/$vaultId': typeof QrExportVaultIdRoute
   '/gallery/': typeof GalleryIndexRoute
   '/gallery/memories/$id': typeof GalleryMemoriesIdRoute
   '/gallery/memories': typeof GalleryMemoriesIndexRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/scan': typeof ScanRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
+  '/qr-export/$vaultId': typeof QrExportVaultIdRoute
   '/gallery': typeof GalleryIndexRoute
   '/gallery/memories/$id': typeof GalleryMemoriesIdRoute
   '/gallery/memories': typeof GalleryMemoriesIndexRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/scan': typeof ScanRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
+  '/qr-export/$vaultId': typeof QrExportVaultIdRoute
   '/gallery/': typeof GalleryIndexRoute
   '/gallery/memories/$id': typeof GalleryMemoriesIdRoute
   '/gallery/memories/': typeof GalleryMemoriesIndexRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/scan'
     | '/setup'
     | '/vaults'
+    | '/qr-export/$vaultId'
     | '/gallery/'
     | '/gallery/memories/$id'
     | '/gallery/memories'
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/scan'
     | '/setup'
     | '/vaults'
+    | '/qr-export/$vaultId'
     | '/gallery'
     | '/gallery/memories/$id'
     | '/gallery/memories'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/scan'
     | '/setup'
     | '/vaults'
+    | '/qr-export/$vaultId'
     | '/gallery/'
     | '/gallery/memories/$id'
     | '/gallery/memories/'
@@ -153,6 +165,7 @@ export interface RootRouteChildren {
   ScanRoute: typeof ScanRoute
   SetupRoute: typeof SetupRoute
   VaultsRoute: typeof VaultsRoute
+  QrExportVaultIdRoute: typeof QrExportVaultIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -213,6 +226,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GalleryIndexRouteImport
       parentRoute: typeof GalleryRoute
     }
+    '/qr-export/$vaultId': {
+      id: '/qr-export/$vaultId'
+      path: '/qr-export/$vaultId'
+      fullPath: '/qr-export/$vaultId'
+      preLoaderRoute: typeof QrExportVaultIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/gallery/memories/': {
       id: '/gallery/memories/'
       path: '/memories'
@@ -253,6 +273,7 @@ const rootRouteChildren: RootRouteChildren = {
   ScanRoute: ScanRoute,
   SetupRoute: SetupRoute,
   VaultsRoute: VaultsRoute,
+  QrExportVaultIdRoute: QrExportVaultIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

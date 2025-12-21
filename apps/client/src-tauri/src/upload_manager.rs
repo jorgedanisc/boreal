@@ -375,7 +375,7 @@ impl UploadManager {
                         if let Err(e) = result {
                             // Already handled in process_item_with_retry
                             // Print debug representation to see error chain
-                            eprintln!("Upload failed: {:?}", e);
+                            log::info!("Upload failed: {:?}", e);
                         }
                     }
                     None => {
@@ -493,13 +493,13 @@ impl UploadManager {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid key length"))?;
 
-        eprintln!("[Upload {}] Processing media...", id);
+        log::info!("[Upload {}] Processing media...", id);
 
         // Extract EXIF metadata (capture date, GPS) for images
         let exif_metadata = if item.media_type == MediaType::Image {
             let metadata = exif_extractor::extract_metadata(&item.path);
             if metadata.has_data() {
-                eprintln!(
+                log::info!(
                     "[Upload {}] EXIF: captured_at={:?}, lat={:?}, lon={:?}",
                     id,
                     metadata.captured_at.as_ref().map(|d| d.to_rfc3339()),
@@ -527,7 +527,7 @@ impl UploadManager {
                     .context(format!("Failed to process image: {:?}", item.path))?;
 
                 let thumbnail_bytes = processed.thumbnail.unwrap_or_else(|| {
-                    eprintln!(
+                    log::info!(
                         "[Upload {}] No thumbnail generated, using original (resized)",
                         id
                     );
@@ -535,7 +535,7 @@ impl UploadManager {
                 });
 
                 // Encrypt original (WebP)
-                eprintln!("[Upload {}] Encrypting processed original...", id);
+                log::info!("[Upload {}] Encrypting processed original...", id);
                 Self::update_status_static(
                     queue,
                     app_handle,
@@ -653,7 +653,7 @@ impl UploadManager {
 
         // Check if cancelled before upload
         if cancelled_ids.read().await.contains(&id) {
-            eprintln!("[Upload {}] Cancelled before upload", id);
+            log::info!("[Upload {}] Cancelled before upload", id);
             return Ok(());
         }
 
@@ -663,7 +663,7 @@ impl UploadManager {
             MediaType::Video => "video",
             MediaType::Audio => "audio",
         };
-        eprintln!(
+        log::info!(
             "[Upload {}] Uploading {} ({} bytes)...",
             id,
             media_type_label,
@@ -768,7 +768,7 @@ impl UploadManager {
             let cache_guard = thumbnail_cache.lock().await;
             if let Some(cache) = cache_guard.as_ref() {
                 if let Err(e) = cache.put(&id, &raw_thumb) {
-                    eprintln!(
+                    log::info!(
                         "[Upload {}] Warning: Failed to cache thumbnail locally: {}",
                         id, e
                     );
@@ -784,7 +784,7 @@ impl UploadManager {
         };
 
         // Add entry to local database
-        eprintln!("[Upload {}] Adding {} to database...", id, media_type_str);
+        log::info!("[Upload {}] Adding {} to database...", id, media_type_str);
         {
             let db_guard = db.lock().await;
             if let Some(conn) = db_guard.as_ref() {
@@ -817,12 +817,12 @@ impl UploadManager {
                         longitude
                     ],
                 ).context("Failed to insert into database")?;
-                eprintln!(
+                log::info!(
                     "[Upload {}] {} added to database successfully",
                     id, media_type_str
                 );
             } else {
-                eprintln!("[Upload {}] Warning: Database not initialized", id);
+                log::info!("[Upload {}] Warning: Database not initialized", id);
             }
         }
 
@@ -840,19 +840,19 @@ impl UploadManager {
         let original_size_str = format_bytes(item.size);
         let compressed_original_str = format_bytes(compressed_original_size as u64);
 
-        eprintln!("[Upload {}] Compression Stats:", id);
-        eprintln!("+----------------+----------------+----------------------+");
-        eprintln!("| Original Size  | Compressed Orig| Compressed Thumb     |");
-        eprintln!("+----------------+----------------+----------------------+");
-        eprintln!(
+        log::info!("[Upload {}] Compression Stats:", id);
+        log::info!("+----------------+----------------+----------------------+");
+        log::info!("| Original Size  | Compressed Orig| Compressed Thumb     |");
+        log::info!("+----------------+----------------+----------------------+");
+        log::info!(
             "| {:<14} | {:<14} | {:<20} |",
             original_size_str, compressed_original_str, thumb_size_str
         );
-        eprintln!("+----------------+----------------+----------------------+");
+        log::info!("+----------------+----------------+----------------------+");
         // Emit completion event
         app_handle
             .emit("upload:completed", serde_json::json!({ "id": id }))
-            .unwrap_or_else(|e| eprintln!("Failed to emit upload:completed event: {}", e));
+            .unwrap_or_else(|e| log::info!("Failed to emit upload:completed event: {}", e));
 
         Ok(())
     }

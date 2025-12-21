@@ -1,15 +1,15 @@
-import { createFileRoute, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { GalleryBottomNav } from '@/components/GalleryBottomNav';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, Plus, ShareIcon } from 'lucide-react';
-import { useState, useEffect, createContext, useContext } from 'react';
 import { MemoryEditor } from '@/components/memories/MemoryEditor';
-import { ShareVaultDialog } from '@/components/vault/ShareVaultDialog';
-import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
-import { UploadTrigger } from '@/components/upload/UploadTrigger';
+import { Button } from '@/components/ui/button';
 import { MultipleFileUploader } from '@/components/upload/MultipleFileUploader';
+import { UploadTrigger } from '@/components/upload/UploadTrigger';
+import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
+import { ShareVaultDialog } from '@/components/vault/ShareVaultDialog';
 import { getActiveVault, renameVault, VaultPublic } from '@/lib/vault';
+import { createFileRoute, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
+import { ChevronLeft, Plus, ShareIcon } from 'lucide-react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
 export const Route = createFileRoute('/gallery')({
   component: GalleryLayout,
@@ -82,17 +82,17 @@ function GalleryLayout() {
 
   return (
     <GalleryLayoutContext.Provider value={{ setSubtitle, onMemorySaved: triggerMemoryRefresh }}>
-      <div className="relative min-h-screen bg-background text-foreground flex flex-col h-screen overflow-hidden">
+      <div className="relative text-foreground flex flex-col h-screen overflow-hidden">
         {/* Shared Header */}
         {showSharedHeader && (
           <header
-            className="fixed top-0 left-0 right-0 z-30 pointer-events-none"
+            className="absolute top-0 left-0 right-0 z-30 pointer-events-none"
             style={{ paddingTop: isDesktop ? "32px" : "0px" }}
           >
             <div
-              className="absolute inset-0"
+              className="fixed w-dvw top-0 bg-linear-to-b from-background/85 from-45% to-transparent pointer-events-none"
               style={{
-                background: 'linear-gradient(to bottom, oklch(18.971% 0.00816 296.997) 0%, oklch(18.971% 0.00816 296.997 / 0.9) 50%, oklch(18.971% 0.00816 296.997 / 0) 100%)',
+                height: 'calc(env(safe-area-inset-top) + 72px)',
               }}
             />
             <div className="relative flex items-start justify-between p-4 pointer-events-auto">

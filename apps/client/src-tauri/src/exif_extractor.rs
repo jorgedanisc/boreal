@@ -36,7 +36,7 @@ pub fn extract_metadata(path: &Path) -> ExifMetadata {
     match try_extract_metadata(path) {
         Ok(metadata) => metadata,
         Err(e) => {
-            eprintln!(
+            log::info!(
                 "[EXIF] Failed to extract metadata from {:?}: {}",
                 path.file_name().unwrap_or_default(),
                 e
