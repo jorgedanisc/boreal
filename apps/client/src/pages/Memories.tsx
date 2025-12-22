@@ -131,8 +131,14 @@ export default function MemoriesPage() {
   return (
     <div
       ref={scrollRef}
-      className="absolute inset-0 overflow-y-auto overflow-x-hidden pt-[120px] pb-[100px] px-4"
-      style={{ scrollbarGutter: 'stable both-edges' }}
+      className="absolute inset-0 overflow-y-auto overflow-x-hidden px-4 pl-safe pr-safe"
+      style={{
+        paddingTop: "calc(120px + env(safe-area-inset-top))",
+        paddingBottom: "calc(100px + env(safe-area-inset-bottom))",
+        scrollbarGutter: 'stable both-edges',
+        paddingLeft: 'calc(16px + env(safe-area-inset-left))',
+        paddingRight: 'calc(16px + env(safe-area-inset-right))'
+      }}
     >
       {memories.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">

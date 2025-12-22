@@ -18,7 +18,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 const PROTOCOL_VERSION: u8 = 1;
 const SESSION_EXPIRY_SECS: u64 = 180; // 3 minutes
-const MAX_FRAGMENT_SIZE: usize = 100; // Reduced to 100 to force multi-frame streaming (UX)
+const MAX_FRAGMENT_SIZE: usize = 15;
 
 // ========================
 // Types
@@ -161,12 +161,12 @@ impl ReceiverSession {
         match self.decoder.receive(ur_string) {
             Ok(_) => {
                 self.frames_received += 1;
-                log.push_str(&format!(
+                log::debug!(
                     "Accepted. Total: {}, Complete: {}, MsgLen: {:?}\n",
                     self.frames_received,
                     self.decoder.complete(),
                     self.decoder.message().ok().flatten().map(|v| v.len())
-                ));
+                );
             }
             Err(e) => {
                 // Log ALL errors for debugging to find why it gets stuck
@@ -196,7 +196,7 @@ impl ReceiverSession {
         };
 
         // Also print to stdout for redundancy
-        log::info!("[Receiver] {}", log.replace("\n", " | "));
+        log::debug!("[Receiver] {}", log.replace("\n", " | "));
 
         let progress = ImportProgress {
             complete: self.decoder.complete(),
@@ -405,7 +405,7 @@ impl SenderSession {
         // This eliminates the memory leak from Box::leak
         let frames = Self::precompute_frames(&payload)?;
 
-        log::info!(
+        log::debug!(
             "[Sender] Payload: {} bytes, Fragment size: {}, Generated {} frames",
             payload.len(),
             MAX_FRAGMENT_SIZE,
@@ -456,7 +456,7 @@ impl SenderSession {
             frames.push(part);
         }
 
-        log::info!(
+        log::debug!(
             "[Sender] Pre-computed {} frames (min required: {})",
             frames.len(),
             min_frames
@@ -477,7 +477,7 @@ impl SenderSession {
 
         // Log every 10th frame to avoid spam
         if self.current_frame_idx % 10 == 0 {
-            log::info!(
+            log::debug!(
                 "[Sender] Serving frame {}/{}",
                 self.current_frame_idx,
                 self.frames.len()

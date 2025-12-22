@@ -23,7 +23,7 @@ Resources:
     Properties:
       # Append a unique suffix from the Stack ID to ensure uniqueness
       BucketName: !Sub 
-        - 'boreal-${VaultName}-${AWS::AccountId}-${AWS::Region}-${StackGuid}'
+        - 'vault-${StackGuid}-${VaultName}-${AWS::AccountId}-${AWS::Region}'
         - StackGuid: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -77,11 +77,18 @@ Resources:
                   - 's3:PutObject'
                   - 's3:GetObject'
                   - 's3:ListBucket'
+                  - 's3:ListBucketVersions'
                   - 's3:DeleteObject'
+                  - 's3:DeleteObjectVersion'
                   - 's3:RestoreObject'
                   - 's3:PutObjectTagging'
                   - 's3:GetObjectTagging'
                   - 's3:DeleteBucket'
+                  - 's3:CreateMultipartUpload'
+                  - 's3:UploadPart'
+                  - 's3:CompleteMultipartUpload'
+                  - 's3:AbortMultipartUpload'
+                  - 's3:ListMultipartUploadParts'
                 Resource:
                   - !GetAtt VaultBucket.Arn
                   - !Sub '${VaultBucket.Arn}/*'
@@ -94,6 +101,11 @@ Resources:
                 Resource: !Sub 
                   - 'arn:aws:iam::${AWS::AccountId}:user/boreal-user-${VaultName}-${StackGuid}'
                   - StackGuid: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+              # CloudWatch Metrics for Bucket Size
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:GetMetricStatistics'
+                Resource: '*'
 
   # Access Keys for the User
   VaultAccessKey:

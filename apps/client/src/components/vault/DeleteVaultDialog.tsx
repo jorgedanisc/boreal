@@ -18,6 +18,7 @@ interface DeleteVaultDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   vaultName: string;
+  bucketName: string;
   onConfirm: (deleteCloud: boolean) => void;
 }
 
@@ -25,6 +26,7 @@ export function DeleteVaultDialog({
   open,
   onOpenChange,
   vaultName,
+  bucketName,
   onConfirm,
 }: DeleteVaultDialogProps) {
   const [deleteCloud, setDeleteCloud] = useState(false);
@@ -51,7 +53,7 @@ export function DeleteVaultDialog({
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2 text-destructive">
             <IconAlertTriangle className="w-5 h-5" />
-            Delete {vaultName}?
+            Delete "{vaultName}"?
           </AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <p>
@@ -73,7 +75,7 @@ export function DeleteVaultDialog({
                   Also delete AWS resources
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  This will empty and delete the S3 bucket "{vaultName}" associated
+                  This will empty and delete the S3 bucket <span className="font-mono bg-background/50 px-1 rounded truncate max-w-[200px] inline-block align-bottom">{bucketName}</span> associated
                   with this vault. All photos/memories will be lost forever.
                 </p>
               </div>

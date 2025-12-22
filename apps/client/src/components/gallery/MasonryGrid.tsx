@@ -18,8 +18,8 @@ interface VirtualizedMasonryGridProps {
   columns?: number;
   spacing?: number;
   paddingX?: number; // Horizontal padding for the grid container
-  paddingTop?: number; // Top padding (for fixed header)
-  paddingBottom?: number; // Bottom padding (for fixed bottom nav)
+  paddingTop?: number | string; // Top padding (for fixed header)
+  paddingBottom?: number | string; // Bottom padding (for fixed bottom nav)
   onItemClick?: (index: number) => void;
   onColumnsChange?: (columns: number) => void;
   onScrollPositionChange?: (offsetY: number, totalHeight: number) => void;
@@ -79,36 +79,82 @@ export function VirtualizedMasonryGrid({
       return { layout: [] as LayoutItem[], totalHeight: 0 };
     }
 
-    const colWidth = (containerWidth - (columns - 1) * spacing) / columns;
-    const colHeights = Array(columns).fill(0);
+    // Row-based (Justified) Layout
+    // We treat 'columns' as the target number of items per row, which defines the target row height.
+    const targetRowHeight = (containerWidth - (columns - 1) * spacing) / columns;
+    const fullLayout: LayoutItem[] = [];
 
-    const fullLayout: LayoutItem[] = items.map((item, globalIndex) => {
-      const colIndex = colHeights.indexOf(Math.min(...colHeights));
+    let currentRow: { item: MediaItem; globalIndex: number; ratio: number; widthAtTarget: number }[] = [];
+    let currentY = 0;
+    let currentRowWidth = 0;
 
-      const x = colIndex * (colWidth + spacing);
-      const y = colHeights[colIndex];
-
-      // Calculate aspect-ratio based height
+    items.forEach((item, globalIndex) => {
       const w = item.width > 0 ? item.width : 1;
       const h = item.height > 0 ? item.height : 1;
       const ratio = item.mediaType === 'audio' ? 1 : (w / h);
-      const itemHeight = colWidth / ratio;
 
-      colHeights[colIndex] += itemHeight + spacing;
+      const widthAtTarget = targetRowHeight * ratio;
 
-      return {
-        item,
-        x,
-        y,
-        width: colWidth,
-        height: itemHeight,
-        globalIndex,
-      };
+      currentRow.push({ item, globalIndex, ratio, widthAtTarget });
+      currentRowWidth += widthAtTarget;
+
+      // Check if we interpret the row as full
+      // We check if the width (plus spacings) is >= containerWidth
+      const rowGap = (currentRow.length - 1) * spacing;
+      if (currentRowWidth + rowGap >= containerWidth) {
+        // Finalize row
+        // Calculate exact height to fill containerWidth
+        // containerWidth = sum(widths) + gaps
+        // containerWidth = h * sum(ratios) + gaps
+        // h = (containerWidth - gaps) / sum(ratios)
+
+        const sumRatios = currentRow.reduce((sum, it) => sum + it.ratio, 0);
+        // Ensure we don't divide by zero or have weird behavior
+        const finalRowHeight = (containerWidth - rowGap) / sumRatios;
+
+        let currentX = 0;
+        currentRow.forEach((rowItem) => {
+          const itemWidth = finalRowHeight * rowItem.ratio;
+          fullLayout.push({
+            item: rowItem.item,
+            x: currentX,
+            y: currentY,
+            width: itemWidth,
+            height: finalRowHeight,
+            globalIndex: rowItem.globalIndex
+          });
+          currentX += itemWidth + spacing;
+        });
+
+        currentY += finalRowHeight + spacing;
+        currentRow = [];
+        currentRowWidth = 0;
+      }
     });
+
+    // Handle remaining items (Last row)
+    // We don't stretch them, we just keep targetRowHeight and align left
+    if (currentRow.length > 0) {
+      let currentX = 0;
+      currentRow.forEach((rowItem) => {
+        // Use target height
+        const itemWidth = rowItem.widthAtTarget;
+        fullLayout.push({
+          item: rowItem.item,
+          x: currentX,
+          y: currentY,
+          width: itemWidth,
+          height: targetRowHeight,
+          globalIndex: rowItem.globalIndex
+        });
+        currentX += itemWidth + spacing;
+      });
+      currentY += targetRowHeight + spacing;
+    }
 
     return {
       layout: fullLayout,
-      totalHeight: Math.max(...colHeights, 0),
+      totalHeight: Math.max(currentY - spacing, 0),
     };
   }, [items, columns, containerWidth, spacing]);
 
@@ -212,8 +258,8 @@ export function VirtualizedMasonryGrid({
       style={{
         touchAction: 'pan-y',
         // Use spacing value for edge padding to match item gaps
-        paddingLeft: spacing,
-        paddingRight: spacing,
+        paddingLeft: `calc(16px + env(safe-area-inset-left))`,
+        paddingRight: `calc(16px + env(safe-area-inset-right))`,
         paddingTop: paddingTop,
         paddingBottom: paddingBottom,
         // Reserve scrollbar space on both edges for symmetry

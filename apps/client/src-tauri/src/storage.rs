@@ -1,7 +1,7 @@
 use crate::vault::VaultConfig;
 use anyhow::{Context, Result};
 use async_stream::stream;
-use aws_config::meta::region::RegionProviderChain;
+
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
@@ -31,6 +31,7 @@ pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 #[derive(Clone)]
 pub struct Storage {
     client: Client,
+    cw_client: aws_sdk_cloudwatch::Client,
     bucket: String,
 }
 
@@ -61,18 +62,18 @@ impl Storage {
 
         // Wrap connector for AWS SDK using the hyper_014 adapter
         // Note: HyperClientBuilder::build expects the connector, not a full Client
-        let http_client = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
-            .build(https_connector);
-
+        let http_client_s3 = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
+            .build(https_connector.clone());
+        
         // Build S3 config with our custom HTTP client
         // Note: We disable stalled stream protection since we're using a custom HTTP client
         // that doesn't integrate with AWS SDK's async sleep mechanism
         let s3_config =
             aws_sdk_s3::config::Builder::new()
-                .region(region)
-                .credentials_provider(credentials)
+                .region(region.clone())
+                .credentials_provider(credentials.clone())
                 .behavior_version(BehaviorVersion::latest())
-                .http_client(http_client)
+                .http_client(http_client_s3)
                 .stalled_stream_protection(
                     aws_sdk_s3::config::StalledStreamProtectionConfig::disabled(),
                 )
@@ -81,10 +82,73 @@ impl Storage {
 
         let client = Client::from_conf(s3_config);
 
+        // Build CloudWatch config
+        let http_client_cw = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
+            .build(https_connector);
+
+        let cw_config = aws_sdk_cloudwatch::config::Builder::new()
+            .region(region)
+            .credentials_provider(credentials)
+            .behavior_version(BehaviorVersion::latest())
+            .http_client(http_client_cw)
+            .stalled_stream_protection(
+                aws_sdk_cloudwatch::config::StalledStreamProtectionConfig::disabled(),
+            )
+            .identity_cache(aws_sdk_cloudwatch::config::IdentityCache::no_cache())
+            .build();
+        
+        let cw_client = aws_sdk_cloudwatch::Client::from_conf(cw_config);
+
         Self {
             client,
+            cw_client,
             bucket: config.bucket.clone(),
         }
+    }
+
+    /// Fetch total bucket size in bytes from CloudWatch (Standard Storage)
+    pub async fn get_bucket_size(&self) -> Result<u64, String> {
+        let end_time = std::time::SystemTime::now();
+        let start_time = end_time
+            .checked_sub(std::time::Duration::from_secs(86400 * 2)) // Look back 48 hours to be safe
+            .unwrap_or(end_time);
+
+        let result = self
+            .cw_client
+            .get_metric_statistics()
+            .namespace("AWS/S3")
+            .metric_name("BucketSizeBytes")
+            .dimensions(
+                aws_sdk_cloudwatch::types::Dimension::builder()
+                    .name("BucketName")
+                    .value(&self.bucket)
+                    .build(),
+            )
+            .dimensions(
+                aws_sdk_cloudwatch::types::Dimension::builder()
+                    .name("StorageType")
+                    .value("StandardStorage")
+                    .build(),
+            )
+            .start_time(aws_smithy_types::DateTime::from(start_time))
+            .end_time(aws_smithy_types::DateTime::from(end_time))
+            .period(86400)
+            .statistics(aws_sdk_cloudwatch::types::Statistic::Average)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch metrics: {}", e))?;
+
+        // Get the latest datapoint
+        if let Some(datapoints) = result.datapoints {
+            if let Some(latest) = datapoints
+                .iter()
+                .max_by_key(|d| d.timestamp.as_ref().map(|t| t.secs()).unwrap_or(0))
+            {
+                return Ok(latest.average.unwrap_or(0.0) as u64);
+            }
+        }
+
+        Ok(0) // No data yet or error
     }
 
     pub async fn upload_file(&self, key: &str, body: Vec<u8>) -> Result<()> {
@@ -138,11 +202,36 @@ impl Storage {
         let tag_value = if fresh_upload { "true" } else { "false" };
         let tagging = format!("fresh={}", tag_value);
 
-        // Force multipart upload even for small files to reuse the progress tracking logic
-        // The inefficiency is negligible for USER UX benefit of seeing progress
-        // S3 allows multipart uploads for any size (minimum 5MB is for PARTS, but if there is only 1 part, it can be small)
-        self.upload_multipart_with_tag(key, body, &tagging, progress_tx)
-            .await
+        // Use multipart upload ONLY for large files (> 5MB)
+        // Small files use standard put_object for better stability and fewer permission requirements
+        if body.len() > MULTIPART_THRESHOLD {
+            self.upload_multipart_with_tag(key, body, &tagging, progress_tx).await
+        } else {
+            let total_size = body.len() as u64;
+            
+            // Emit start progress
+            if let Some(ref tx) = progress_tx {
+                tx.send((0, total_size)).await.ok();
+            }
+
+            let result = self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .body(ByteStream::from(body))
+                .tagging(&tagging)
+                .send()
+                .await;
+
+            // Emit completion progress on success
+            if result.is_ok() {
+                if let Some(ref tx) = progress_tx {
+                    tx.send((total_size, total_size)).await.ok();
+                }
+            }
+
+            result.map(|_| ()).context("Failed to upload file")
+        }
     }
 
     /// Multipart upload for large files with progress tracking
@@ -177,6 +266,7 @@ impl Storage {
         for (i, chunk) in body.chunks(MULTIPART_PART_SIZE).enumerate() {
             let part_number = (i + 1) as i32;
             let chunk_vec = chunk.to_vec();
+            let chunk_len = chunk_vec.len() as u64;
 
             // Create a streaming body if progress tracking is enabled
             let stream = if let Some(tx) = progress_tx.clone() {
@@ -204,7 +294,10 @@ impl Storage {
                 };
 
                 // Wrap in ProgressBody and convert to SdkBody
-                let body = ProgressBody { inner: Box::pin(s) };
+                let body = ProgressBody {
+                    inner: Box::pin(s),
+                    len: chunk_len,
+                };
                 ByteStream::new(SdkBody::from_body_0_4(body))
             } else {
                 ByteStream::from(chunk_vec)
@@ -391,8 +484,10 @@ impl Storage {
 }
 
 // Helper struct for progress tracking
+// Helper struct for progress tracking
 struct ProgressBody {
     inner: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Sync>>,
+    len: u64,
 }
 
 impl Body for ProgressBody {
@@ -411,5 +506,9 @@ impl Body for ProgressBody {
         _cx: &mut TaskContext<'_>,
     ) -> Poll<Result<Option<http::HeaderMap>, Self::Error>> {
         Poll::Ready(Ok(None))
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.len)
     }
 }

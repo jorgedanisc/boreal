@@ -1,7 +1,7 @@
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useNavigate } from '@tanstack/react-router';
-import { ApertureIcon, FilmIcon, Map as MapIcon } from 'lucide-react';
+import { ApertureIcon, FilmIcon } from 'lucide-react';
 import { SegmentedControl } from './ui/SegmentedControl';
 
 interface GalleryBottomNavProps {
@@ -25,8 +25,6 @@ export function GalleryBottomNav({ currentView }: GalleryBottomNavProps) {
             navigate({ to: '/gallery/memories' });
           } else if (v === 'gallery') {
             navigate({ to: '/gallery' });
-          } else if (v === 'map') {
-            // navigate({ to: '/gallery/map' }); // Future
           }
         }}
         items={[
@@ -39,12 +37,7 @@ export function GalleryBottomNav({ currentView }: GalleryBottomNavProps) {
             value: 'gallery',
             label: 'Library',
             icon: <ApertureIcon className="size-5 mb-0.5" />
-          },
-          {
-            value: 'map',
-            label: 'Map',
-            icon: <MapIcon className="size-5 mb-0.5" />
-          },
+          }
         ]}
       />
     </div>

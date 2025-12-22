@@ -13,6 +13,7 @@ export interface VaultPublic {
   name: string;
   bucket: string;
   visits: number;
+  total_size_bytes: number;
 }
 
 export async function getVaults(): Promise<VaultPublic[]> {

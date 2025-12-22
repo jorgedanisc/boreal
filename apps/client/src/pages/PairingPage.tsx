@@ -42,9 +42,15 @@ export function PairingPage() {
 
     startPairingMode().catch((e) => {
       console.error("Failed to start pairing mode:", e);
-      // Extract meaningful error message
-      const errorMessage = String(e).replace(/^Error:\s*/i, '');
-      setStatus((s) => ({ ...s, state: "error", error: errorMessage }));
+      // Wait a moment to see if polling picks up a valid state (race condition fix)
+      setTimeout(() => {
+        setStatus(current => {
+          // If we are already in a valid state despite the start error, ignore the error
+          if (current.state !== "idle" && current.state !== "error") return current;
+          const errorMessage = String(e).replace(/^Error:\s*/i, '');
+          return { ...current, state: "error", error: errorMessage };
+        });
+      }, 1000);
     });
     return () => {
       stopPairingMode().catch(console.error);
@@ -115,8 +121,8 @@ export function PairingPage() {
 
   return (
     <div className={cn(
-      isDesktop ? "pt-8" : "pt-0",
-      "flex flex-col"
+      "flex flex-col h-screen pt-safe",
+      isDesktop && "pt-8"
     )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-3">

@@ -87,15 +87,16 @@ function GalleryLayout() {
         {showSharedHeader && (
           <header
             className="absolute top-0 left-0 right-0 z-30 pointer-events-none"
-            style={{ paddingTop: isDesktop ? "32px" : "0px" }}
+            style={{ paddingTop: isDesktop ? "32px" : "env(safe-area-inset-top)" }}
           >
             <div
-              className="fixed w-dvw top-0 bg-linear-to-b from-background/85 from-45% to-transparent pointer-events-none"
+              className="fixed w-dvw top-0 left-0 right-0 pointer-events-none z-5"
               style={{
-                height: 'calc(env(safe-area-inset-top) + 72px)',
+                background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0.55) 25%, rgba(0, 0, 0, 0.4) 45%, rgba(0, 0, 0, 0.25) 60%, rgba(0, 0, 0, 0.12) 75%, rgba(0, 0, 0, 0.04) 88%, transparent 100%)',
+                height: isDesktop ? 'calc(32px + 160px)' : 'calc(env(safe-area-inset-top) + 160px)',
               }}
             />
-            <div className="relative flex items-start justify-between p-4 pointer-events-auto">
+            <div className="relative flex items-start justify-between px-4 pt-4 pb-2 pl-safe pr-safe pointer-events-auto z-10">
               <div className="flex flex-col">
                 <div className="flex items-center gap-1">
                   <Button
@@ -146,9 +147,9 @@ function GalleryLayout() {
 
         {/* Bottom Navigation + FAB for Memories */}
         {showBottomNav && (
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
-            {/* Nav is centered, plus button is positioned absolutely to the right */}
-            <div className="relative">
+          <div className="fixed bottom-0 left-0 right-0 pb-safe z-40 pointer-events-none">
+            {/* Nav is centered, plus button is positioned absolutely to the right. Use pointer-events-auto for children. */}
+            <div className="relative bottom-6 flex justify-center w-full pointer-events-auto">
               <GalleryBottomNav currentView={currentView} />
 
               {isMemoriesListView && (

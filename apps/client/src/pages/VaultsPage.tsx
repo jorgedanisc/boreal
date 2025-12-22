@@ -78,8 +78,8 @@ export function VaultsPage() {
 
   return (
     <div className={cn(
-      "flex flex-col",
-      isDesktop ? "pt-8" : "pt-0",
+      "flex flex-col h-screen pt-safe",
+      isDesktop && "pt-8"
     )}>
       {/* Header */}
       <header className="p-4 border-b flex items-center gap-4">
@@ -140,6 +140,7 @@ export function VaultsPage() {
         open={!!deleteId}
         onOpenChange={(open) => !open && setDeleteId(null)}
         vaultName={vaults.find(v => v.id === deleteId)?.name || ""}
+        bucketName={vaults.find(v => v.id === deleteId)?.bucket || ""}
         onConfirm={handleDelete}
       />
     </div>

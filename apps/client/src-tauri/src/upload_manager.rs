@@ -25,6 +25,17 @@ const FRESH_UPLOAD_SIZE_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20GB
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_RETRY_DELAY_MS: u64 = 1000;
 
+struct PreparedUpload {
+    original_key: String,
+    thumbnail_key: Option<String>,
+    enc_original: Vec<u8>,
+    enc_thumbnail: Option<Vec<u8>>,
+    width: u32,
+    height: u32,
+    raw_thumbnail: Option<Vec<u8>>,
+    exif_metadata: Option<exif_extractor::ExifMetadata>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UploadStatus {
     Pending,
@@ -404,6 +415,25 @@ impl UploadManager {
         mut item: UploadItem,
     ) -> Result<()> {
         let id = item.id.clone();
+        
+        // Step 1: Prepare (Heavy CPU Processing + Encryption) - Done ONCE
+        // Cancel check happens inside prepare
+        let prepared = match Self::prepare_item(
+            queue,
+            cancelled_ids,
+            config,
+            app_handle,
+            &item
+        ).await {
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(()), // Cancelled
+            Err(e) => {
+                Self::handle_failure_static(queue, app_handle, &id, &e.to_string()).await;
+                return Err(e);
+            }
+        };
+
+        // Step 2: Upload (Network) - Retried on failure
         let mut last_error = String::new();
 
         for attempt in 0..MAX_RETRY_ATTEMPTS {
@@ -412,31 +442,31 @@ impl UploadManager {
                 return Ok(());
             }
 
-            // Update retry count
-            item.retry_count = attempt;
-            {
-                let mut queue_guard = queue.write().await;
-                if let Some(q_item) = queue_guard.get_mut(&id) {
-                    q_item.retry_count = attempt;
+            // Update retry count in UI
+            if attempt > 0 {
+                item.retry_count = attempt;
+                {
+                    let mut queue_guard = queue.write().await;
+                    if let Some(q_item) = queue_guard.get_mut(&id) {
+                        q_item.retry_count = attempt;
+                    }
                 }
             }
 
             // Attempt the upload
-            match Self::process_item_internal(
+            match Self::upload_item(
                 queue,
-                cancelled_ids,
                 storage,
-                config,
                 db,
                 thumbnail_cache,
                 app_handle,
                 &item,
-            )
-            .await
-            {
+                &prepared
+            ).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     last_error = e.to_string();
+                    log::warn!("[Upload {}] Attempt {} failed: {}", id, attempt + 1, last_error);
 
                     if attempt < MAX_RETRY_ATTEMPTS - 1 {
                         // Exponential backoff
@@ -452,16 +482,13 @@ impl UploadManager {
         Err(anyhow::anyhow!(last_error))
     }
 
-    async fn process_item_internal(
+    async fn prepare_item(
         queue: &Arc<RwLock<HashMap<String, UploadItem>>>,
         cancelled_ids: &Arc<RwLock<HashSet<String>>>,
-        storage: &Arc<Mutex<Option<Storage>>>,
         config: &Arc<Mutex<Option<VaultConfig>>>,
-        db: &Arc<Mutex<Option<Connection>>>,
-        thumbnail_cache: &Arc<Mutex<Option<ThumbnailCache>>>,
         app_handle: &AppHandle,
         item: &UploadItem,
-    ) -> Result<()> {
+    ) -> Result<Option<PreparedUpload>> {
         let id = item.id.clone();
 
         // Update status to Processing
@@ -469,24 +496,18 @@ impl UploadManager {
 
         // Check if cancelled
         if cancelled_ids.read().await.contains(&id) {
-            return Ok(());
+            return Ok(None);
         }
 
-        // Get storage and config
-        let (storage, vault_key) = {
-            let storage_guard = storage.lock().await;
+        // Get config and key
+        let vault_key = {
             let config_guard = config.lock().await;
-            let storage = storage_guard
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
-                .clone();
             let config = config_guard
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Vault not loaded"))?;
-            let vault_key = BASE64
+            BASE64
                 .decode(&config.vault_key)
-                .context("Invalid vault key encoding")?;
-            (storage, vault_key)
+                .context("Invalid vault key encoding")?
         };
 
         let key_arr: [u8; 32] = vault_key
@@ -495,7 +516,7 @@ impl UploadManager {
 
         log::info!("[Upload {}] Processing media...", id);
 
-        // Extract EXIF metadata (capture date, GPS) for images
+        // Extract EXIF metadata
         let exif_metadata = if item.media_type == MediaType::Image {
             let metadata = exif_extractor::extract_metadata(&item.path);
             if metadata.has_data() {
@@ -534,7 +555,7 @@ impl UploadManager {
                     processed.original.clone() // Fallback
                 });
 
-                // Encrypt original (WebP)
+                // Encrypt
                 log::info!("[Upload {}] Encrypting processed original...", id);
                 Self::update_status_static(
                     queue,
@@ -543,12 +564,9 @@ impl UploadManager {
                     UploadStatus::EncryptingOriginal,
                 )
                 .await;
-                let enc_original =
-                    crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
-
-                // Encrypt thumbnail
-                let enc_thumbnail = crypto::encrypt(&thumbnail_bytes, &key_arr)
-                    .context("Thumbnail encryption failed")?;
+                
+                let enc_original = crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
+                let enc_thumbnail = crypto::encrypt(&thumbnail_bytes, &key_arr).context("Thumbnail encryption failed")?;
 
                 let original_key = format!("originals/images/{}.webp", id);
                 let thumbnail_key = format!("thumbnails/{}.webp", id);
@@ -567,21 +585,19 @@ impl UploadManager {
                 let temp_dir = std::env::temp_dir();
                 let output_path = temp_dir.join(format!("{}.mp4", id));
 
-                // Process video (Transcode to H.265, generate thumb, preview not used yet)
+                // Transcode
                 let transcoder = media_processor::TauriTranscoder {
                     app: app_handle.clone(),
                 };
-                let processed =
-                    media_processor::process_video(&transcoder, &item.path, &output_path)
+                let processed = media_processor::process_video(&transcoder, &item.path, &output_path)
                         .await
                         .context(format!("Failed to process video: {:?}", item.path))?;
 
                 // Cleanup temp file
                 std::fs::remove_file(&output_path).ok();
-
                 let thumbnail_bytes = processed.thumbnail.unwrap_or_default();
 
-                // Encrypt original (H.265 MP4)
+                // Encrypt
                 Self::update_status_static(
                     queue,
                     app_handle,
@@ -589,9 +605,8 @@ impl UploadManager {
                     UploadStatus::EncryptingOriginal,
                 )
                 .await;
-                let enc_original =
-                    crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
-
+                
+                let enc_original = crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
                 let enc_thumbnail = if !thumbnail_bytes.is_empty() {
                     Some(crypto::encrypt(&thumbnail_bytes, &key_arr)?)
                 } else {
@@ -600,12 +615,7 @@ impl UploadManager {
 
                 let original_key = format!("originals/videos/{}.mp4", id);
                 let thumbnail_key = format!("thumbnails/{}.webp", id);
-
-                let raw_thumb = if !thumbnail_bytes.is_empty() {
-                    Some(thumbnail_bytes)
-                } else {
-                    None
-                };
+                let raw_thumb = if !thumbnail_bytes.is_empty() { Some(thumbnail_bytes) } else { None };
 
                 (
                     original_key,
@@ -618,21 +628,19 @@ impl UploadManager {
                 )
             }
             MediaType::Audio => {
-                // Process audio (Convert to Opus using ffmpeg)
                 let temp_dir = std::env::temp_dir();
                 let output_path = temp_dir.join(format!("{}.opus", id));
 
                 let transcoder = media_processor::TauriTranscoder {
                     app: app_handle.clone(),
                 };
-                let processed =
-                    media_processor::process_audio(&transcoder, &item.path, &output_path)
+                let processed = media_processor::process_audio(&transcoder, &item.path, &output_path)
                         .await
                         .context(format!("Failed to process audio: {:?}", item.path))?;
 
                 std::fs::remove_file(&output_path).ok();
 
-                // Encrypt original (Opus)
+                // Encrypt
                 Self::update_status_static(
                     queue,
                     app_handle,
@@ -640,22 +648,46 @@ impl UploadManager {
                     UploadStatus::EncryptingOriginal,
                 )
                 .await;
-                let enc_original =
-                    crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
+                let enc_original = crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
 
                 let extension = "opus";
-                // Audio goes to "audio/" prefix (Standard Tier), NOT "originals/" (Glacier)
                 let original_key = format!("audio/{}.{}", id, extension);
 
                 (original_key, None, enc_original, None, 0, 0, None)
             }
         };
 
-        // Check if cancelled before upload
-        if cancelled_ids.read().await.contains(&id) {
-            log::info!("[Upload {}] Cancelled before upload", id);
-            return Ok(());
-        }
+        Ok(Some(PreparedUpload {
+            original_key,
+            thumbnail_key,
+            enc_original,
+            enc_thumbnail,
+            width,
+            height,
+            raw_thumbnail,
+            exif_metadata,
+        }))
+    }
+
+    async fn upload_item(
+        queue: &Arc<RwLock<HashMap<String, UploadItem>>>,
+        storage: &Arc<Mutex<Option<Storage>>>,
+        db: &Arc<Mutex<Option<Connection>>>,
+        thumbnail_cache: &Arc<Mutex<Option<ThumbnailCache>>>,
+        app_handle: &AppHandle,
+        item: &UploadItem,
+        prepared: &PreparedUpload,
+    ) -> Result<()> {
+        let id = item.id.clone();
+
+        // Get storage
+        let storage = {
+            let storage_guard = storage.lock().await;
+            storage_guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Storage not initialized"))?
+                .clone()
+        };
 
         // Upload original
         let media_type_label = match item.media_type {
@@ -663,12 +695,14 @@ impl UploadManager {
             MediaType::Video => "video",
             MediaType::Audio => "audio",
         };
+        
         log::info!(
             "[Upload {}] Uploading {} ({} bytes)...",
             id,
             media_type_label,
-            enc_original.len()
+            prepared.enc_original.len()
         );
+        
         Self::update_status_static(
             queue,
             app_handle,
@@ -677,9 +711,9 @@ impl UploadManager {
         )
         .await;
 
-        let original_size = enc_original.len() as u64;
-        let compressed_original_size = enc_original.len();
-        let compressed_thumbnail_size = enc_thumbnail.as_ref().map(|t| t.len());
+        let original_size = prepared.enc_original.len() as u64;
+        let compressed_original_size = prepared.enc_original.len();
+        let compressed_thumbnail_size = prepared.enc_thumbnail.as_ref().map(|t| t.len());
 
         // Create progress channel for real-time updates
         let (progress_tx, mut progress_rx) = mpsc::channel::<(u64, u64)>(32);
@@ -696,7 +730,6 @@ impl UploadManager {
             let mut last_progress = 0.0;
 
             while let Some((uploaded, total)) = progress_rx.recv().await {
-                // Throttle updates: max 10 per second unless progress jumps by > 1%
                 let now = Instant::now();
                 let progress = if total > 0 {
                     (uploaded as f64 / total as f64) * 0.5 // Original upload is 0-50%
@@ -704,11 +737,6 @@ impl UploadManager {
                     0.0
                 };
 
-                // Allow update if:
-                // 1. First update
-                // 2. > 100ms elapsed
-                // 3. > 1% change
-                // 4. Complete (approximate check, though "Complete" status is set later)
                 if last_progress == 0.0
                     || now.duration_since(last_update_time).as_millis() >= 100
                     || (progress - last_progress).abs() >= 0.01
@@ -730,22 +758,20 @@ impl UploadManager {
         // Upload with progress tracking
         let upload_result = storage
             .upload_file_with_progress(
-                &original_key,
-                enc_original,
+                &prepared.original_key,
+                prepared.enc_original.clone(), // Clone the vec for upload (retry needs to keep ownership)
                 item.fresh_upload,
                 Some(progress_tx),
             )
             .await;
 
-        // Wait for progress task to finish
         progress_task.abort();
-
-        upload_result.context(format!("Failed to upload original to S3: {}", original_key))?;
+        upload_result.context(format!("Failed to upload original to S3: {}", prepared.original_key))?;
 
         Self::update_progress_static(queue, app_handle, &id, 0.5, item.size / 2).await;
 
         // Upload thumbnail if exists
-        if let (Some(thumb_key), Some(enc_thumb)) = (thumbnail_key.as_ref(), enc_thumbnail) {
+        if let (Some(thumb_key), Some(enc_thumb)) = (prepared.thumbnail_key.as_ref(), prepared.enc_thumbnail.as_ref()) {
             Self::update_status_static(
                 queue,
                 app_handle,
@@ -754,20 +780,19 @@ impl UploadManager {
             )
             .await;
 
-            let thumb_result = storage.upload_file(thumb_key, enc_thumb).await;
+            let thumb_result = storage.upload_file(thumb_key, enc_thumb.clone()).await;
 
             if thumb_result.is_err() {
-                // Rollback: delete the original that was just uploaded
-                storage.delete_file(&original_key).await.ok();
+                storage.delete_file(&prepared.original_key).await.ok();
                 return Err(thumb_result.unwrap_err().into());
             }
         }
 
-        // Cache thumbnail locally after successful S3 upload (for offline access)
-        if let Some(raw_thumb) = raw_thumbnail {
+        // Cache thumbnail locally
+        if let Some(raw_thumb) = prepared.raw_thumbnail.as_ref() {
             let cache_guard = thumbnail_cache.lock().await;
             if let Some(cache) = cache_guard.as_ref() {
-                if let Err(e) = cache.put(&id, &raw_thumb) {
+                if let Err(e) = cache.put(&id, raw_thumb) {
                     log::info!(
                         "[Upload {}] Warning: Failed to cache thumbnail locally: {}",
                         id, e
@@ -790,13 +815,14 @@ impl UploadManager {
             if let Some(conn) = db_guard.as_ref() {
                 let tier = "Standard";
 
-                // Get EXIF metadata values
-                let captured_at = exif_metadata
+                let captured_at = prepared.exif_metadata
                     .as_ref()
                     .and_then(|m| m.captured_at.as_ref())
                     .map(|d| d.to_rfc3339());
-                let latitude = exif_metadata.as_ref().and_then(|m| m.latitude);
-                let longitude = exif_metadata.as_ref().and_then(|m| m.longitude);
+                let latitude = prepared.exif_metadata.as_ref().and_then(|m| m.latitude);
+                let longitude = prepared.exif_metadata.as_ref().and_then(|m| m.longitude);
+
+
 
                 conn.execute(
                     "INSERT INTO photos (id, filename, width, height, created_at, captured_at, size_bytes, s3_key, thumbnail_key, tier, media_type, latitude, longitude)
@@ -804,13 +830,13 @@ impl UploadManager {
                     rusqlite::params![
                         id,
                         item.filename,
-                        width,
-                        height,
+                        prepared.width,
+                        prepared.height,
                         chrono::Utc::now().to_rfc3339(),
                         captured_at,
                         original_size,
-                        original_key,
-                        thumbnail_key.as_deref().unwrap_or(""),
+                        prepared.original_key,
+                        prepared.thumbnail_key.as_deref().unwrap_or(""),
                         tier,
                         media_type_str,
                         latitude,

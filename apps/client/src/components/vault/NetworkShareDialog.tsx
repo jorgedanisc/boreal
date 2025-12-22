@@ -81,9 +81,9 @@ export function NetworkShareDialog({
     return () => clearInterval(interval);
   }, [open, state]);
 
-  // Poll for pairing status when connecting
+  // Poll for pairing status when connecting or waiting
   useEffect(() => {
-    if (!open || (state !== "connecting" && state !== "verifying")) return;
+    if (!open || (state !== "connecting" && state !== "verifying" && state !== "waiting")) return;
 
     const interval = setInterval(async () => {
       try {

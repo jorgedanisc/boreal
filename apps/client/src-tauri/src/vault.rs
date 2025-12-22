@@ -27,6 +27,7 @@ pub struct VaultPublic {
     pub name: String,
     pub bucket: String,
     pub visits: u32,
+    pub total_size_bytes: u64,
 }
 
 impl VaultConfig {

@@ -92,37 +92,41 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
 
           <div className="flex flex-col gap-3 py-4">
             {/* New QR Export Flow */}
-            <Button
-              variant="outline"
-              className="h-auto py-3 px-4 justify-start gap-3 hover:bg-primary/5 hover:text-primary border-primary/20 group"
+            <button
+              type="button"
               onClick={() => {
                 setIsOpen(false);
                 navigate({ to: "/qr-export/$vaultId", params: { vaultId } });
               }}
+              className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-left transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
             >
-              <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
-                <IconQrcode className="w-5 h-5 text-primary" />
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors shrink-0">
+                  <IconQrcode className="w-5 h-5 text-blue-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors">Export via QR Code</span>
+                  <span className="text-[10px] text-muted-foreground group-hover:text-foreground/60 transition-colors">Scan on another device to transfer</span>
+                </div>
               </div>
-              <div className="flex flex-col items-start gap-0.5">
-                <span className="text-sm font-medium">Export via QR Code</span>
-                <span className="text-[10px] text-muted-foreground">Scan on another device to transfer</span>
-              </div>
-            </Button>
+            </button>
 
             {/* Network Share */}
-            <Button
-              variant="outline"
-              className="h-auto py-3 px-4 justify-start gap-3 hover:bg-blue-500/5 hover:text-blue-500 border-blue-500/20 group"
+            <button
+              type="button"
               onClick={() => setShowNetworkShare(true)}
+              className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-left transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
             >
-              <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
-                <IconDevices className="w-5 h-5 text-blue-500" />
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors shrink-0">
+                  <IconDevices className="w-5 h-5 text-blue-500" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors">Share over Network</span>
+                  <span className="text-[10px] text-muted-foreground group-hover:text-foreground/60 transition-colors">Pair devices on same Wi-Fi</span>
+                </div>
               </div>
-              <div className="flex flex-col items-start gap-0.5">
-                <span className="text-sm font-medium">Share over Network</span>
-                <span className="text-[10px] text-muted-foreground">Pair devices on same Wi-Fi</span>
-              </div>
-            </Button>
+            </button>
 
             {/* Recovery Kit - Separator */}
             <div className="relative flex items-center w-full py-2">
@@ -133,20 +137,22 @@ export function ShareVaultDialog({ vaultId, trigger }: ShareVaultDialogProps) {
 
             {/* Print Recovery Kit */}
             <div className="space-y-2">
-              <Button
-                variant="ghost"
-                className="w-full h-auto py-3 px-4 justify-start gap-3 hover:bg-amber-500/5 hover:text-amber-600 group"
+              <button
+                type="button"
                 onClick={handlePrint}
                 disabled={printing}
+                className="w-full relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-left transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-amber-500/10 hover:via-amber-500/5 hover:to-transparent disabled:opacity-50 disabled:pointer-events-none"
               >
-                <div className="p-2 bg-amber-500/10 rounded-lg group-hover:bg-amber-500/20 transition-colors">
-                  {printing ? <Spinner className="w-5 h-5 text-amber-600" /> : <IconPrinter className="w-5 h-5 text-amber-600" />}
+                <div className="flex items-start gap-4">
+                  <div className="p-2 bg-amber-500/10 rounded-lg group-hover:bg-amber-500/20 transition-colors shrink-0">
+                    {printing ? <Spinner className="w-5 h-5 text-amber-600" /> : <IconPrinter className="w-5 h-5 text-amber-600" />}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium text-foreground/80 group-hover:text-foreground transition-colors">Print Recovery Kit</span>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground/60 transition-colors">Paper backup for emergencies</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-start gap-0.5">
-                  <span className="text-sm font-medium">Print Recovery Kit</span>
-                  <span className="text-[10px] text-muted-foreground">Paper backup for emergencies</span>
-                </div>
-              </Button>
+              </button>
               <p className="text-[9px] text-center text-muted-foreground/40 px-4">
                 Contains your full vault access key. Store securely offline.
               </p>

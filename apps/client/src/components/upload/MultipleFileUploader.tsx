@@ -238,8 +238,10 @@ export function MultipleFileUploader() {
     // The snippet says "clearing pending files... clearing them out".
     // We iterate files and remove them if they are not Processing.
     files.forEach(f => {
-      // If status is not active (i.e. not currently uploading)
-      if (f.status === 'Pending' || f.status === 'Failed' || (typeof f.status === 'object' && 'Failed' in f.status)) {
+      // If status is Pending, we can remove it.
+      // Do NOT remove Failed items automatically - user needs to see them.
+      // To remove failed items, user can individually click X or we can add a specific "Clear Failed" later.
+      if (f.status === 'Pending') {
         removeFile(f.id);
       }
     });

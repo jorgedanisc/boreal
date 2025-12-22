@@ -201,9 +201,9 @@ export default function Gallery() {
   const GRID_SPACING = 5;
 
   return (
-    <div className="text-foreground flex flex-col h-screen bg-background relative overflow-hidden">
+    <>
       {/* Main Content - grid fills entire screen */}
-      <main className="fixed inset-0">
+      <main className="absolute inset-0">
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
@@ -217,8 +217,8 @@ export default function Gallery() {
             items={mediaItems}
             columns={4}
             spacing={GRID_SPACING}
-            paddingTop={isDesktop ? 120 : 150}
-            paddingBottom={100}
+            paddingTop={isDesktop ? 120 : "calc(120px + env(safe-area-inset-top))"}
+            paddingBottom="calc(100px + env(safe-area-inset-bottom))"
             onItemClick={handleItemClick}
             onScrollPositionChange={handleScrollPositionChange}
             onLayoutComputed={handleLayoutComputed}
@@ -253,7 +253,7 @@ export default function Gallery() {
           }
         }}
       />
-    </div>
+    </>
   );
 
 }

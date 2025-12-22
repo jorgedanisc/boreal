@@ -18,7 +18,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="h-8 top-0 w-dvw select-none bg-transparent z-9999"
+      className="fixed top-0 left-0 h-8 w-dvw select-none bg-transparent z-9999"
     />
   );
 }

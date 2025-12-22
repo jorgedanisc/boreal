@@ -200,7 +200,7 @@ pub fn import_manifest(conn: &Connection, data: ManifestData) -> Result<MergeSta
     // Name: remote wins if local is empty OR if local is the default "Imported Vault"
     let local_name = db::get_metadata(conn, "name")?;
     let should_update_name = match local_name.as_deref() {
-        None | Some("") | Some("Imported Vault") => true,
+        None | Some("") | Some("Imported Vault") | Some("Untitled Vault") => true,
         _ => false,
     };
 

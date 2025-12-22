@@ -15,7 +15,7 @@ import {
 } from "@/lib/qr-transfer";
 import { cn } from "@/lib/utils";
 import { importVault, importVaultStep1Save, importVaultStep2Load, importVaultStep3Sync } from "@/lib/vault";
-import { IconArrowLeft, IconScan, IconLock, IconBug } from "@tabler/icons-react";
+import { IconArrowLeft, IconScan, IconLock } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type } from "@tauri-apps/plugin-os";
 import QrScanner from "qr-scanner";
@@ -121,9 +121,6 @@ export function QrScannerPage() {
   const [totalScans, setTotalScans] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [showLogs, setShowLogs] = useState(true);
-
   // Camera management
   const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
@@ -132,22 +129,14 @@ export function QrScannerPage() {
   // Prevent multiple completions
   const isCompletingRef = useRef(false);
 
-  const addLog = (msg: string) => {
-    console.log("[QR Import]", msg);
-    setLogs(prev => [msg, ...prev].slice(0, 100));
-  };
-
   useEffect(() => {
     const init = async () => {
       try {
-        addLog("Initializing import session...");
         const req = await createImportRequest();
         setRequest(req);
-        addLog("Session ready. Show QR to sender.");
       } catch (e) {
         console.error(e);
         setError("Failed to initialize import session");
-        addLog(`INIT ERROR: ${e}`);
       }
     };
     init();
@@ -164,44 +153,31 @@ export function QrScannerPage() {
 
   const handleFinish = useCallback(async () => {
     try {
-      addLog("Completing QR import (decrypting payload)...");
       await new Promise(r => setTimeout(r, 300));
 
       const vaultJson = await completeQrImport();
-      addLog("Payload decrypted successfully!");
-
-      const parsed = JSON.parse(vaultJson);
-      addLog(`Vault ID: ${parsed.id || "N/A"}`);
-      addLog(`Bucket: ${parsed.bucket || "N/A"}`);
 
       // Step 1: Save credentials (with 15s timeout)
-      addLog("[Step 1/3] Saving credentials...");
       const step1 = importVaultStep1Save(vaultJson);
       const step1Timeout = new Promise((_, r) => setTimeout(() => r(new Error("Step 1 timed out")), 15000));
       const savedId = await Promise.race([step1, step1Timeout]) as string;
-      addLog(`[Step 1/3] DONE. ID: ${savedId}`);
 
       // Step 2: Load vault (with 15s timeout)
-      addLog("[Step 2/3] Loading vault...");
       const step2 = importVaultStep2Load(savedId);
       const step2Timeout = new Promise((_, r) => setTimeout(() => r(new Error("Step 2 timed out")), 15000));
       await Promise.race([step2, step2Timeout]);
-      addLog("[Step 2/3] DONE. Vault activated.");
 
       // Step 3: Sync from S3 (with 30s timeout for network)
-      addLog("[Step 3/3] Syncing from S3...");
       const step3 = importVaultStep3Sync();
       const step3Timeout = new Promise((_, r) => setTimeout(() => r(new Error("Step 3 timed out")), 30000));
-      const syncResult = await Promise.race([step3, step3Timeout]) as string;
-      addLog(`[Step 3/3] DONE. ${syncResult}`);
+      await Promise.race([step3, step3Timeout]) as string;
 
-      addLog("ALL STEPS COMPLETE!");
       toast.success("Import Successful", {
         description: "Vault imported and synced.",
       });
       navigate({ to: "/gallery" });
     } catch (e) {
-      addLog(`FINISH ERROR: ${e}`);
+      console.error("Import Completion Error:", e);
       toast.error("Import Failed", { description: String(e) });
       setError(String(e));
       setLoading(false);
@@ -218,13 +194,11 @@ export function QrScannerPage() {
       setProgress(res);
 
       if (res.complete) {
-        addLog("Transfer complete! All frames received.");
         isCompletingRef.current = true;
         setLoading(true);
 
         handleFinish().catch((e: any) => {
           console.error("Finish failed:", e);
-          addLog(`Finish error: ${e}`);
           isCompletingRef.current = false;
           setLoading(false);
         });
@@ -258,14 +232,6 @@ export function QrScannerPage() {
         </Button>
 
         <div className="flex gap-2 pointer-events-auto">
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("text-white/70 hover:bg-white/20 backdrop-blur-sm", showLogs && "text-green-400 bg-black/40")}
-            onClick={() => setShowLogs(!showLogs)}
-          >
-            <IconBug className="w-5 h-5" />
-          </Button>
           {isDesktop && cameras.length > 0 && state === "scanning" && (
             <Select value={selectedCameraId} onValueChange={setSelectedCameraId}>
               <SelectTrigger className="w-[180px] bg-black/40 backdrop-blur-md text-white border-white/20 h-8 text-xs">
@@ -342,26 +308,6 @@ export function QrScannerPage() {
             )}
           </div>
 
-          {/* Debug Logs Overlay */}
-          {showLogs && (
-            <div className="absolute top-16 left-4 right-4 h-40 bg-black/80 backdrop-blur-md rounded-xl border border-white/10 z-40 flex flex-col overflow-hidden pointer-events-auto">
-              <div className="px-3 py-2 bg-black/40 border-b border-white/5 flex justify-between items-center">
-                <span className="text-[10px] font-bold text-green-400 uppercase tracking-wider">Debug Logs</span>
-                <span className="text-[10px] text-muted-foreground">{logs.length} events</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-1 font-mono text-[9px] text-green-300">
-                {logs.length === 0 && (
-                  <div className="text-white/30 italic text-center py-4">Waiting for events...</div>
-                )}
-                {logs.map((log, i) => (
-                  <div key={i} className="leading-tight break-all pl-2 border-l border-green-800">
-                    {log}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Progress UI */}
           {!loading && (
             <div className="mt-8 w-full max-w-xs z-10 pointer-events-none">
@@ -381,9 +327,7 @@ export function QrScannerPage() {
                       style={{ width: `${Math.min(100, progress.estimated_percent || 0)}%` }}
                     />
                   </div>
-                  <div className="text-center text-[10px] text-white/50 font-mono">
-                    SAS: {progress.sas_code || "..."}
-                  </div>
+
                 </div>
               ) : (
                 <div className="text-center space-y-2 text-white/80 animate-in fade-in slide-in-from-bottom-4 duration-500">

@@ -51,6 +51,7 @@ struct QrTransferManagerState {
 use crate::vault::store;
 use crate::vault::VaultPublic;
 
+
 /// Get all vaults with name/visits from SQLite
 #[tauri::command]
 async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
@@ -63,7 +64,7 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
         let vault_dir = app_dir.join("vaults").join(&id);
         let db_path = vault_dir.join("manifest.db");
 
-        let (name, visits) = if db_path.exists() {
+        let (name, visits, size) = if db_path.exists() {
             // Read from SQLite
             let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
             let name = db::get_metadata(&conn, "name")
@@ -73,10 +74,14 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
                 .map_err(|e| e.to_string())?
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            (name, visits)
+            let size: u64 = db::get_metadata(&conn, "total_size_bytes")
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            (name, visits, size)
         } else {
             // New vault or migration needed - use defaults
-            ("Untitled Vault".to_string(), 0)
+            ("Untitled Vault".to_string(), 0, 0)
         };
 
         vaults.push(VaultPublic {
@@ -84,6 +89,7 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
             name,
             bucket,
             visits,
+            total_size_bytes: size,
         });
     }
 
@@ -91,6 +97,8 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
     vaults.sort_by(|a, b| b.visits.cmp(&a.visits));
     Ok(vaults)
 }
+
+
 
 #[tauri::command]
 async fn load_vault(
@@ -170,6 +178,18 @@ async fn load_vault(
 
     tokio::spawn(async move {
         if let (Some(storage), Some(config)) = (storage_clone, config_clone) {
+            // 0. Update vault size stats (best effort)
+            if let Ok(size) = storage.get_bucket_size().await {
+                let db_guard = db_clone.lock().await;
+                if let Some(conn) = db_guard.as_ref() {
+                    if let Err(e) = db::set_metadata(conn, "total_size_bytes", &size.to_string()) {
+                        log::warn!("[Vault Stats] Failed to save size: {}", e);
+                    } else {
+                        log::info!("[Vault Stats] Updated size: {} bytes", size);
+                    }
+                }
+            }
+
             // 1. Pull latest from cloud
             match sync_manifest_download_internal(&storage, &db_clone, &config).await {
                 Ok(_) => {
@@ -946,12 +966,17 @@ async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPubl
                 .map_err(|e| e.to_string())?
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
+            let size: u64 = db::get_metadata(conn, "total_size_bytes")
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
 
             Ok(Some(VaultPublic {
                 id: c.id.clone(),
                 name,
                 bucket: c.bucket.clone(),
                 visits,
+                total_size_bytes: size,
             }))
         }
         (Some(c), None) => {
@@ -961,6 +986,7 @@ async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPubl
                 name: "Loading...".to_string(),
                 bucket: c.bucket.clone(),
                 visits: 0,
+                total_size_bytes: 0,
             }))
         }
         _ => Ok(None),
@@ -969,7 +995,21 @@ async fn get_active_vault(state: State<'_, AppState>) -> Result<Option<VaultPubl
 
 #[tauri::command]
 async fn export_vault(app: AppHandle, id: String) -> Result<String, String> {
-    let config = store::load_vault(&app, &id)?;
+    let mut config = store::load_vault(&app, &id)?;
+
+    // Fetch the actual name from SQLite
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_dir = app_dir.join("vaults").join(&id);
+    let db_path = vault_dir.join("manifest.db");
+
+    if db_path.exists() {
+        if let Ok(conn) = db::init_db(&db_path) {
+            if let Ok(Some(name)) = db::get_metadata(&conn, "name") {
+                config.name = Some(name);
+            }
+        }
+    }
+
     serde_json::to_string(&config).map_err(|e| format!("Failed to serialize vault: {}", e))
 }
 
@@ -1337,8 +1377,20 @@ async fn start_pairing_mode(pairing_state: State<'_, PairingManagerState>) -> Re
         .unwrap_or_else(|_| "Boreal Device".to_string());
 
     let manager = pairing::PairingManager::new(device_name);
-    manager.start_listening().await.map_err(|e| e.to_string())?;
+    
+    // Set manager immediately so status polling works
+    let manager_clone = manager.clone();
     *guard = Some(manager);
+    
+    // Run initialization in background to prevent blocking
+    tokio::spawn(async move {
+        if let Err(e) = manager_clone.start_listening().await {
+            log::error!("Failed to start listening: {}", e);
+            // Ensure error state is set if start_listening didn't do it
+            // (start_listening handles most errors internally but just in case)
+        }
+    });
+
     Ok(())
 }
 
