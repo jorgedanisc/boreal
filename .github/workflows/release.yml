@@ -1,9 +1,15 @@
 name: "Release"
 
-on: workflow_dispatch
+on:
+  workflow_run:
+    workflows: ["Build Test"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   release:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: write
       issues: write

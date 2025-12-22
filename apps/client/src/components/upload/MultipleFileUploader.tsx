@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import { useUploadStore } from "@/stores/upload_store";
 import { cn, formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,15 +18,17 @@ import {
   Upload as UploadIcon,
   X as XIcon,
   File as FileIcon,
+  AudioLines as AudioLinesIcon, // New Icon
   //   Loader2,
   //   Check,
   //   AlertTriangle,
   FlameKindling,
 } from "lucide-react";
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { motion, AnimatePresence } from "motion/react";
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 // Tauri drag-drop event payload type
 interface DragDropPayload {
@@ -34,7 +36,13 @@ interface DragDropPayload {
   position: { x: number; y: number };
 }
 
-const getFileIconByName = (_name: string, _isSmall = false, className = "") => {
+const getFileIconByName = (name: string, _isSmall = false, className = "") => {
+  const ext = name.split('.').pop()?.toLowerCase();
+  const isAudio = ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext || '');
+
+  if (isAudio) {
+    return <AudioLinesIcon className={cn("text-muted-foreground", className)} />;
+  }
   return <FileIcon className={cn("text-muted-foreground", className)} />;
 };
 
@@ -44,6 +52,183 @@ interface MediaExtensions {
   videos: string[];
   audio: string[];
 }
+
+// Helper to extract frames from video using Blob URLs (cross-platform)
+const extractFramesFromVideo = async (path: string): Promise<string[]> => {
+  try {
+    // Dynamic import to avoid SSR issues
+    const { readFile } = await import('@tauri-apps/plugin-fs');
+
+    // 1. Read file as binary
+    const bytes = await readFile(path);
+
+    // 2. Determine MIME type from extension
+    const ext = path.split('.').pop()?.toLowerCase() || 'mp4';
+    const mimeTypes: Record<string, string> = {
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'avi': 'video/x-msvideo',
+      'mkv': 'video/x-matroska',
+      'webm': 'video/webm',
+    };
+    const mimeType = mimeTypes[ext] || 'video/mp4';
+
+    // 3. Create Blob and Object URL
+    const blob = new Blob([bytes], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+
+    // 4. Extract frames
+    const frames = await extractFramesFromBlobUrl(blobUrl);
+
+    // 5. Cleanup
+    URL.revokeObjectURL(blobUrl);
+
+    return frames;
+  } catch (err) {
+    console.error("[ExtractFrames] Failed to extract frames:", err);
+    return [];
+  }
+};
+
+// Extract frames from a blob URL using canvas (optimized)
+const extractFramesFromBlobUrl = (blobUrl: string): Promise<string[]> => {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.src = blobUrl;
+    video.muted = true;
+    video.playsInline = true; // Important for mobile
+    video.preload = 'metadata';
+    // Append to body but hidden - ensures rendering triggers on some WebViews
+    video.style.position = 'absolute';
+    video.style.opacity = '0';
+    video.style.top = '-9999px';
+    video.style.pointerEvents = 'none';
+    document.body.appendChild(video);
+
+    const frames: string[] = [];
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const cleanup = () => {
+      if (document.body.contains(video)) {
+        document.body.removeChild(video);
+      }
+      URL.revokeObjectURL(blobUrl);
+    };
+
+    if (!ctx) {
+      cleanup();
+      resolve([]);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve(frames);
+    }, 15000); // Increased timeout for slower devices
+
+    video.onloadedmetadata = async () => {
+      const duration = video.duration;
+      if (!duration || duration === Infinity || isNaN(duration)) {
+        cleanup();
+        clearTimeout(timeout);
+        resolve([]);
+        return;
+      }
+
+      const count = 6;
+      const interval = duration / count;
+
+      try {
+        // Start at 0.5s or 5% to avoid intro black frames
+        const startOffset = Math.min(0.5, duration * 0.05);
+
+        for (let i = 0; i < count; i++) {
+          const seekTime = Math.min(startOffset + (i * interval), duration - 0.1);
+          video.currentTime = seekTime;
+
+          await new Promise<void>((r) => {
+            const seekHandler = () => {
+              video.removeEventListener('seeked', seekHandler);
+              // Small delay to ensure frame is actually rendered in buffer
+              setTimeout(r, 150);
+            };
+            video.addEventListener('seeked', seekHandler);
+          });
+
+          // Use original video dimensions (no resizing)
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+
+          // Draw full resolution frame
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          // Convert to base64 JPEG with decent quality (0.8)
+          // Note: Full res frames -> large payload. 
+          // Backend handles final resize/compression for animated thumbnail.
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          frames.push(dataUrl.split(',')[1]);
+        }
+      } catch (e) {
+        console.error("[ExtractFrames] Error:", e);
+      }
+
+      clearTimeout(timeout);
+      cleanup();
+      resolve(frames);
+    };
+
+    video.onerror = () => {
+      clearTimeout(timeout);
+      cleanup();
+      resolve([]);
+    };
+  });
+};
+
+const isVideoFile = (path: string) => {
+  const ext = path.split('.').pop()?.toLowerCase();
+  return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '');
+}
+
+const isImageFile = (path: string) => {
+  const ext = path.split('.').pop()?.toLowerCase();
+  return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext || '');
+}
+
+// Component to handle async image loading from local FS via Blob URL
+// This bypasses asset:// protocol issues by using the same method as video frames
+const ImagePreview = ({ path }: { path: string }) => {
+  const [src, setSrc] = useState<string>('');
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const { readFile } = await import('@tauri-apps/plugin-fs');
+        const bytes = await readFile(path);
+        const blob = new Blob([bytes]);
+        const url = URL.createObjectURL(blob);
+        if (active) setSrc(url);
+        return () => URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error("Failed to load image preview", path, e);
+      }
+    };
+    const cleanup = load();
+    return () => { active = false; cleanup.then(c => c?.()); };
+  }, [path]);
+
+  if (!src) return <div className="w-full h-full bg-muted animate-pulse" />;
+
+  return (
+    <img
+      src={src}
+      className="w-full h-full object-cover rounded-sm"
+      alt="preview"
+    />
+  );
+};
 
 export function MultipleFileUploader() {
   const {
@@ -55,21 +240,37 @@ export function MultipleFileUploader() {
     toggleMinimized,
     removeFile,
     clearFinished,
+    clearPending,
     getPendingCount,
-    // getActiveCount,
-    // getFailedCount,
-    // getCompletedCount,
-    // toggleFreshUpload,
     getOverallProgress,
     getTotalSize,
     getTotalBytesUploaded,
     initializeListeners,
     freshUploadEnabled,
-    // toggleFreshUpload,
     setFreshUpload,
   } = useUploadStore();
 
   const filesToRender = [...files].sort((a, b) => b.size - a.size); // Sort by size descending
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: filesToRender.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 72, // Approximate height of each row item
+    overscan: 5,
+  });
+
+  // Force measure update when drawer opens or files change to fix blank list issue
+  // Using useLayoutEffect + setTimeout to ensure DOM is ready after drawer animation
+  useLayoutEffect(() => {
+    if (!isMinimized && parentRef.current) {
+      // Small delay to wait for drawer animation to complete and DOM to be ready
+      const timeoutId = setTimeout(() => {
+        rowVirtualizer.measure();
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isMinimized, filesToRender.length, rowVirtualizer]);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -139,7 +340,23 @@ export function MultipleFileUploader() {
 
         const paths = event.payload.paths;
         if (paths && paths.length > 0) {
-          await addFiles(paths);
+          // Process thumbnails for dropped video files
+          const thumbnails: Record<string, string[]> = {};
+
+          await Promise.all(paths.map(async (p) => {
+            if (isVideoFile(p)) {
+              toast.loading("generating thumbnail...");
+              const frames = await extractFramesFromVideo(p);
+              console.log('[Thumbnail Debug] Extracted frames for', p, ':', frames.length, 'frames');
+              if (frames.length > 0) {
+                thumbnails[p] = frames;
+              }
+              toast.dismiss();
+            }
+          }));
+
+          console.log('[Thumbnail Debug] thumbnails map:', Object.keys(thumbnails));
+          await addFiles(paths, thumbnails);
           toast.success(`Added ${paths.length} item${paths.length > 1 ? 's' : ''}`);
         }
       });
@@ -187,10 +404,30 @@ export function MultipleFileUploader() {
       });
 
       if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        // @ts-ignore - paths matches store expectation
-        await addFiles(paths);
-        toast.success(`Added ${paths.length} files`);
+        // @ts-ignore
+        const pathList: string[] = Array.isArray(selected) ? selected : [selected];
+
+        // Extract frames
+        const thumbnails: Record<string, string[]> = {};
+        // Run in parallel but only for a few items to avoid UI freeze? 
+        // For mobile selection usually small number. 
+        // For desktop mass select, this might take time.
+        // Let's limit concurrency if needed, but for now simple Promise.all
+        // Only checking explicit video extensions to avoid overhead
+
+        const videoPaths = pathList.filter(isVideoFile);
+        if (videoPaths.length > 0) {
+          toast.message("Processing video thumbnails...");
+          await Promise.all(videoPaths.map(async (p) => {
+            const frames = await extractFramesFromVideo(p);
+            if (frames.length > 0) {
+              thumbnails[p] = frames;
+            }
+          }));
+        }
+
+        await addFiles(pathList, thumbnails);
+        toast.success(`Added ${pathList.length} files`);
       }
     } catch (err) {
       console.error("Failed to open file dialog", err);
@@ -233,18 +470,8 @@ export function MultipleFileUploader() {
   const handleClear = async () => {
     // 1. Clear finished using store action
     await clearFinished();
-
-    // 2. Clear pending manually? 
-    // The snippet says "clearing pending files... clearing them out".
-    // We iterate files and remove them if they are not Processing.
-    files.forEach(f => {
-      // If status is Pending, we can remove it.
-      // Do NOT remove Failed items automatically - user needs to see them.
-      // To remove failed items, user can individually click X or we can add a specific "Clear Failed" later.
-      if (f.status === 'Pending') {
-        removeFile(f.id);
-      }
-    });
+    // 2. Clear pending efficiently
+    clearPending();
   };
 
   // Helpers
@@ -401,59 +628,113 @@ export function MultipleFileUploader() {
                     "flex-1 min-h-0 w-full relative",
                   )}
                 >
-                  <ScrollArea className="h-full w-full">
-                    <div className="flex flex-col gap-2 py-5">
-                      {filesToRender.map((file) => {
+                  {/* Virtualized List Container with Scroll Mask */}
+                  <div
+                    key={isOpen ? 'open' : 'closed'}
+                    ref={parentRef}
+                    className="h-full w-full overflow-y-auto relative mask-linear-fade py-4"
+                    style={{
+                      maskImage: 'linear-gradient(to bottom, transparent, black 16px, black calc(100% - 16px), transparent)',
+                      WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 16px, black calc(100% - 16px), transparent)'
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: `${rowVirtualizer.getTotalSize()}px`,
+                        width: '100%',
+                        position: 'relative',
+                      }}
+                    >
+                      {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        const file = filesToRender[virtualRow.index];
                         const progress = getProgressValue(file);
-                        const statusLabel = getStatusLabel(file.status);
+                        const isCompleted = file.status === 'Completed';
+                        const isFailed = typeof file.status === 'object' && 'Failed' in file.status;
 
                         return (
                           <div
                             key={file.id}
-                            className="flex flex-col w-full gap-1 rounded-lg border-2 bg-background p-1.5 pe-3 transition-opacity duration-300"
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: `${virtualRow.size}px`,
+                              transform: `translateY(${virtualRow.start}px)`,
+                            }}
+                            className="p-1"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-3 overflow-hidden">
-                                <div className="flex aspect-square p-1 size-10 shrink-0 items-center justify-center rounded-md border-2">
-                                  {getFileIconByName(file.filename, false, "size-5")}
+                            <div
+                              className={cn(
+                                "flex flex-col w-full gap-1 rounded-lg border-2 p-1.5 pe-3 transition-all duration-300 h-[68px]",
+                                isCompleted ? "border-green-500/50 bg-green-500/5" : "border-border bg-background",
+                                isFailed && "border-destructive/50 bg-destructive/5"
+                              )}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
+                                  <div className="relative flex aspect-square size-10 shrink-0 items-center justify-center rounded-md border-2 overflow-hidden bg-background">
+                                    {file.pre_generated_frames?.[0] ? (
+                                      <img
+                                        src={`data:image/jpeg;base64,${file.pre_generated_frames[0]}`}
+                                        className="w-full h-full object-cover rounded-sm"
+                                        alt="preview"
+                                      />
+                                    ) : isImageFile(file.path) ? (
+                                      <ImagePreview path={file.path} />
+                                    ) : (
+                                      getFileIconByName(file.filename, false, "size-5")
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <span className="text-sm font-medium truncate w-full block" title={file.filename}>
+                                      {file.filename}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground truncate">
+                                      {formatBytes(file.size)}
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="flex min-w-0 flex-col gap-0.5">
-                                  <p className="truncate text-[13px] font-medium" title={file.path}>
-                                    {file.filename}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {formatBytes(file.size)}
-                                  </p>
+
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <div className="flex flex-col items-end min-w-[60px]">
+                                    {/* Only show status text if Failed or uploading */}
+                                    <span className={cn(
+                                      "text-xs font-medium",
+                                      isFailed && "text-destructive"
+                                    )}>
+                                      {isProcessing && file.status !== 'Completed' && !isFailed ? `${Math.round(progress)}%` :
+                                        isFailed ? 'Failed' : ''}
+                                    </span>
+                                  </div>
+                                  {!isProcessing && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                      onClick={() => removeFile(file.id)}
+                                    >
+                                      <XIcon className="size-4" />
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
-                              {!isProcessing && (
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="-me-2 size-8 text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
-                                  onClick={() => removeFile(file.id)}
-                                  aria-label="Remove file"
-                                >
-                                  <XIcon className="size-4" aria-hidden="true" />
-                                </Button>
+
+                              {/* Progress bar line */}
+                              {isProcessing && !isCompleted && !isFailed && (
+                                <div className="h-1 w-full bg-muted rounded-full overflow-hidden mt-1">
+                                  <div
+                                    className="h-full bg-primary transition-all duration-300"
+                                    style={{ width: `${progress}%` }}
+                                  />
+                                </div>
                               )}
                             </div>
-
-                            {(isProcessing || file.bytesUploaded > 0) && (
-                              <div className="mt-1 flex flex-col gap-1">
-                                <Progress value={progress} />
-                                <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                                  <span>{statusLabel}</span>
-                                  <span>{formatBytes(file.bytesUploaded || 0)} / {formatBytes(file.size)}</span>
-                                </div>
-                              </div>
-                            )}
                           </div>
                         );
-                      })
-                      }
+                      })}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </div>
 
                 {/* Upload button area */}

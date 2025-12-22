@@ -64,10 +64,17 @@ pub struct UploadItem {
     pub bytes_uploaded: u64,
     #[serde(default)]
     pub retry_count: u32,
+    /// Pre-generated frames for video thumbnailing (from Frontend)
+    #[serde(skip)]
+    pub pre_generated_frames: Option<Vec<Vec<u8>>>,
 }
 
 impl UploadItem {
-    pub fn new(path: PathBuf, fresh_upload: bool) -> Result<Self> {
+    pub fn new(
+        path: PathBuf,
+        fresh_upload: bool,
+        pre_generated_frames: Option<Vec<Vec<u8>>>,
+    ) -> Result<Self> {
         let filename = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -86,6 +93,7 @@ impl UploadItem {
             fresh_upload,
             bytes_uploaded: 0,
             retry_count: 0,
+            pre_generated_frames,
         })
     }
 }
@@ -151,14 +159,46 @@ impl UploadManager {
         &self,
         paths: Vec<PathBuf>,
         fresh_upload: bool,
+        thumbnails: Option<HashMap<String, Vec<String>>>,
     ) -> Result<Vec<UploadItem>> {
         let mut items = Vec::new();
         let mut errors = Vec::new();
 
         for path in paths {
-            match UploadItem::new(path.clone(), fresh_upload) {
+            let path_str = path.to_string_lossy().to_string();
+            let frames = if let Some(map) = &thumbnails {
+                if let Some(encoded_frames) = map.get(&path_str) {
+                    // Start Decoding
+                    let mut decoded = Vec::new();
+                    for frame_b64 in encoded_frames {
+                        // Handle data:image/jpeg;base64, prefix if present
+                        let clean_b64 = if let Some(idx) = frame_b64.find(',') {
+                            &frame_b64[idx + 1..]
+                        } else {
+                            frame_b64
+                        };
+
+                        if let Ok(bytes) = BASE64.decode(clean_b64) {
+                            decoded.push(bytes);
+                        } else {
+                            log::warn!("Failed to decode thumbnail frame from frontend");
+                        }
+                    }
+                    if !decoded.is_empty() {
+                        Some(decoded)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            match UploadItem::new(path.clone(), fresh_upload, frames) {
                 Ok(item) => items.push(item),
-                Err(e) => errors.push((path, e.to_string())),
+                Err(e) => errors.push((path, e.to_string())), // Log error but continue
             }
         }
 
@@ -589,7 +629,8 @@ impl UploadManager {
                 let transcoder = media_processor::TauriTranscoder {
                     app: app_handle.clone(),
                 };
-                let processed = media_processor::process_video(&transcoder, &item.path, &output_path)
+                let managed_frames = item.pre_generated_frames.clone();
+                let processed = media_processor::process_video(&transcoder, &item.path, &output_path, managed_frames)
                         .await
                         .context(format!("Failed to process video: {:?}", item.path))?;
 

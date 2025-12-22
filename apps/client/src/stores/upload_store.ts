@@ -32,6 +32,7 @@ export interface UploadFile {
   freshUpload: boolean;
   bytesUploaded: number;
   retryCount: number;
+  pre_generated_frames?: string[];
 }
 
 export interface QueueState {
@@ -58,13 +59,14 @@ interface UploadStore {
   uploadSession: string | null;
 
   // Actions
-  addFiles: (paths: string[]) => Promise<{ autoDisabled: boolean }>;
+  addFiles: (paths: string[], thumbnails?: Record<string, string[]>) => Promise<{ autoDisabled: boolean }>;
   removeFile: (id: string) => Promise<void>;
   cancelFile: (id: string) => Promise<void>;
   pauseFile: (id: string) => Promise<void>;
   resumeFile: (id: string) => Promise<void>;
   retryFile: (id: string) => Promise<void>;
   clearFinished: () => Promise<void>;
+  clearPending: () => void;
   startUpload: () => Promise<void>;
   toggleFreshUpload: () => void;
   setFreshUpload: (enabled: boolean) => void;
@@ -172,12 +174,13 @@ export const useUploadStore = create<UploadStore>()(
       uploadSession: null,
 
       // Add files to the queue
-      addFiles: async (paths: string[]) => {
+      addFiles: async (paths: string[], thumbnails?: Record<string, string[]>) => {
         try {
           const result = await invoke<AddFilesResult>('add_files_to_queue', {
             payload: {
               paths,
               fresh_upload: get().freshUploadEnabled,
+              thumbnails,
             },
           });
 
@@ -196,18 +199,24 @@ export const useUploadStore = create<UploadStore>()(
             isMinimized: false, // Auto-expand panel when files are added
             files: [
               ...state.files,
-              ...result.items.map((item) => ({
-                id: item.id,
-                path: item.path,
-                filename: item.filename,
-                size: item.size,
-                status: item.status,
-                progress: item.progress,
-                mediaType: item.mediaType,
-                freshUpload: item.freshUpload,
-                bytesUploaded: 0,
-                retryCount: 0,
-              })),
+              ...result.items.map((item) => {
+                const frames = thumbnails?.[item.path];
+                // console.log('[Store Debug] item.path:', item.path, 'thumbnails keys:', thumbnails ? Object.keys(thumbnails) : [], 'match:', !!frames, 'mediaType:', item.mediaType);
+                return {
+                  id: item.id,
+                  path: item.path,
+                  filename: item.filename,
+                  size: item.size,
+                  status: item.status,
+                  progress: item.progress,
+                  mediaType: item.mediaType,
+                  freshUpload: item.freshUpload,
+                  bytesUploaded: 0,
+                  retryCount: 0,
+                  // Map backend path to input thumbnails if available
+                  pre_generated_frames: frames,
+                };
+              }),
             ],
           }));
 
@@ -361,6 +370,15 @@ export const useUploadStore = create<UploadStore>()(
                 bytesUploaded: bytesUploaded ?? f.bytesUploaded,
               }
               : f
+          ),
+        }));
+      },
+
+      // Clear all pending files
+      clearPending: () => {
+        set((state) => ({
+          files: state.files.filter((f) =>
+            f.status !== 'Pending' && !('Failed' in f) && f.status !== 'Cancelled'
           ),
         }));
       },
@@ -546,10 +564,16 @@ export const useUploadStore = create<UploadStore>()(
       },
       partialize: (state) => ({
         // Only persist these fields
-        files: state.files.filter((f) => !isStatusFinal(f.status)), // Only pending files
+        // Only persist pending/failed files to save space, and strip frames
+        files: state.files
+          .filter(f => !isStatusFinal(f.status) || typeof f.status === 'object') // Keep pending or failed
+          .map((f) => {
+            const { pre_generated_frames, ...rest } = f;
+            return rest;
+          }),
         freshUploadEnabled: state.freshUploadEnabled,
         isMinimized: state.isMinimized,
-        uploadSession: state.uploadSession,
+        // uploadSession: state.uploadSession, // Don't persist session objects if not needed
       }),
     }
   )

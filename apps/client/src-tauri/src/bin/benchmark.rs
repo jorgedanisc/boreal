@@ -93,7 +93,7 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
         let (processed, media_type) = match ext.as_str() {
             "mp4" | "webm" | "mov" | "mkv" => {
                 let output = test_dir.join(format!("output_{}.mp4", file_name));
-                let p = media_processor::process_video(&transcoder, &path, &output).await;
+                let p = media_processor::process_video(&transcoder, &path, &output, None).await;
                 fs::remove_file(output).ok();
                 (p, "Video")
             }

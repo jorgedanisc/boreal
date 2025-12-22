@@ -1,12 +1,17 @@
 name: Compression Benchmark
 
 on:
+  workflow_run:
+    workflows: ["Build Test"]
+    types: [completed]
+    branches: [main]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
 
 jobs:
   benchmark:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event.workflow_run.conclusion == 'success' }}
     name: Run Compression Benchmark
     runs-on: ubuntu-latest
     
@@ -42,7 +47,7 @@ jobs:
           # We need to provide absolute path or relative from the binary's CWD
           # Workdir is apps/client/src-tauri
           # Fixtures are in root/.ci-fixtures/out -> ../../../.ci-fixtures/out
-          cargo run --bin benchmark -- ../../../.ci-fixtures/out
+          cargo run --bin benchmark --target x86_64-unknown-linux-gnu -- ../../../.ci-fixtures/out
 
       - name: Upload Report
         uses: actions/upload-artifact@v4

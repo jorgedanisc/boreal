@@ -15,7 +15,7 @@ export function GalleryBottomNav({ currentView }: GalleryBottomNavProps) {
     <div
       className={cn(
         buttonVariants({ variant: "glass" }),
-        "rounded-full! p-1 h-14 min-w-[280px] max-w-[90vw] hover:bg-secondary/60"
+        "rounded-full! p-1 h-14 min-w-[180px] max-w-[90vw] hover:bg-secondary/60"
       )}
     >
       <SegmentedControl

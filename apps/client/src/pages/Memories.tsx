@@ -42,6 +42,7 @@ export default function MemoriesPage() {
   const navigate = useNavigate();
   const { setSubtitle } = useGalleryLayout();
   const [memories, setMemories] = useState<Memory[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -53,6 +54,8 @@ export default function MemoriesPage() {
       setMemories(loaded);
     } catch (error) {
       console.error("Failed to load memories:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -140,12 +143,9 @@ export default function MemoriesPage() {
         paddingRight: 'calc(16px + env(safe-area-inset-right))'
       }}
     >
-      {memories.length === 0 ? (
+      {!isLoading && memories.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-muted-foreground space-y-4">
-          <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-            <Sparkles className="w-8 h-8" />
-          </div>
-          <p>No memories yet. Start writing one!</p>
+          <p>No memories yet.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 mx-auto max-w-[2000px]">

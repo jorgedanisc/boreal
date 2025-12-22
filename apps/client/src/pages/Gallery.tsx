@@ -20,6 +20,7 @@ import { type } from '@tauri-apps/plugin-os';
 export default function Gallery() {
   const { setSubtitle } = useGalleryLayout();
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [activeVault, setActiveVault] = useState<VaultPublic | null>(null);
   const { getCompletedCount } = useUploadStore();
@@ -62,6 +63,7 @@ export default function Gallery() {
       const vault = await getActiveVault();
       if (!vault) {
         // No vault loaded, could redirect but layout handles that
+        setIsLoading(false);
         return;
       }
       setActiveVault(vault);
@@ -77,17 +79,28 @@ export default function Gallery() {
         const batch = imageVideoPhotos.slice(i, i + BATCH_SIZE);
         await Promise.all(batch.map(async (p) => {
           if (!thumbnails[p.id]) {
-            try {
-              const b64 = await getThumbnail(p.id);
-              setThumbnails(prev => ({ ...prev, [p.id]: `data:image/webp;base64,${b64}` }));
-            } catch (e) {
-              console.error("Failed to load thumbnail for " + p.id, e);
+            // Retry logic for thumbnails (videos might take a moment to be available)
+            let retries = 3;
+            while (retries > 0) {
+              try {
+                const b64 = await getThumbnail(p.id);
+                if (b64) {
+                  setThumbnails(prev => ({ ...prev, [p.id]: `data:image/webp;base64,${b64}` }));
+                  break;
+                }
+              } catch (e) {
+                console.error(`Failed to load thumbnail for ${p.id} (attempts left: ${retries})`, e);
+              }
+              retries--;
+              if (retries > 0) await new Promise(r => setTimeout(r, 1000));
             }
           }
         }));
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -204,11 +217,8 @@ export default function Gallery() {
     <>
       {/* Main Content - grid fills entire screen */}
       <main className="absolute inset-0">
-        {photos.length === 0 ? (
+        {!isLoading && photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-4">
-            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-              <ImageIcon className="w-8 h-8" />
-            </div>
             <p>No photos yet</p>
             <UploadTrigger />
           </div>

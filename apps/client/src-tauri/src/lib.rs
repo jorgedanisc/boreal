@@ -1122,6 +1122,9 @@ fn authenticate_biometrics(app: AppHandle, reason: String) -> Result<(), String>
 struct AddFilesPayload {
     paths: Vec<String>,
     fresh_upload: bool,
+    /// Optional map of "Path -> List of Base64 encoded Frames"
+    /// Used for frontend-generated video thumbnails (especially on Mobile)
+    thumbnails: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 #[derive(serde::Serialize)]
@@ -1170,9 +1173,9 @@ async fn add_files_to_queue(
     // For now, let the manager handle logic.
 
     // Create proposed items to check fresh upload limits
-    let temp_items: Vec<UploadItem> = valid_paths
-        .iter()
-        .filter_map(|p| UploadItem::new(p.clone(), payload.fresh_upload).ok())
+    let temp_items: Vec<UploadItem> = valid_paths.clone()
+        .into_iter()
+        .filter_map(|p| UploadItem::new(p, payload.fresh_upload, None).ok())
         .collect();
 
     let fresh_upload_auto_disabled = manager.should_disable_fresh_upload(&temp_items);
@@ -1185,7 +1188,7 @@ async fn add_files_to_queue(
 
     // Now add with the correct fresh_upload flag
     let items = manager
-        .add_files(valid_paths, actual_fresh_upload)
+        .add_files(valid_paths, actual_fresh_upload, payload.thumbnails)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -1490,6 +1493,8 @@ async fn get_discovered_devices(
         Ok(Vec::new())
     }
 }
+
+
 
 #[tauri::command]
 async fn initiate_pairing(

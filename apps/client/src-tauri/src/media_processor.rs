@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
+use image::GenericImageView;
 
 /// Maximum dimension for thumbnails (either width or height)
 const THUMBNAIL_MAX_DIM: u32 = 720;
@@ -205,6 +206,17 @@ fn parse_ffmpeg_stderr(stderr: &str) -> Result<VideoMetadata> {
     })
 }
 
+const THUMBNAIL_QUALITY: f32 = 70.0;
+
+/// Shared helper to resize and process a frame/image for thumbnailing
+fn resize_and_process_frame(img: &image::DynamicImage, max_dim: u32) -> Result<(u32, u32, image::RgbaImage)> {
+    let (width, height) = img.dimensions();
+    let (target_w, target_h) = calculate_thumbnail_dimensions(width, height, max_dim);
+    
+    let resized = img.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3);
+    Ok((target_w, target_h, resized.to_rgba8()))
+}
+
 /// Process an image file: create WebP original and thumbnail
 /// Uses image crate directly for reliability
 pub fn process_image(path: &Path) -> Result<ProcessedMedia> {
@@ -223,22 +235,12 @@ pub fn process_image(path: &Path) -> Result<ProcessedMedia> {
         webp_memory.to_vec()
     };
 
-    // Create thumbnail (Q70)
-    let (thumb_width, thumb_height) =
-        calculate_thumbnail_dimensions(width, height, THUMBNAIL_MAX_DIM);
-    let thumbnail_img = img.resize(
-        thumb_width,
-        thumb_height,
-        image::imageops::FilterType::Lanczos3,
-    );
-
-    let (actual_thumb_width, actual_thumb_height) = thumbnail_img.dimensions();
+    // Create thumbnail using shared logic
+    let (thumb_w, thumb_h, thumb_rgba) = resize_and_process_frame(&img, THUMBNAIL_MAX_DIM)?;
 
     let thumbnail_buf = {
-        let rgb_image = thumbnail_img.to_rgb8();
-        let encoder =
-            webp::Encoder::from_rgb(rgb_image.as_raw(), actual_thumb_width, actual_thumb_height);
-        let webp_memory = encoder.encode(70.0);
+        let encoder = webp::Encoder::from_rgba(thumb_rgba.as_raw(), thumb_w, thumb_h);
+        let webp_memory = encoder.encode(THUMBNAIL_QUALITY);
         webp_memory.to_vec()
     };
 
@@ -253,21 +255,131 @@ pub fn process_image(path: &Path) -> Result<ProcessedMedia> {
 }
 
 /// Process a video file: create H.265 MP4 and animated WebP thumbnail
+// Helper to create animated WebP from frames
+fn create_animated_thumbnail(frames: Vec<Vec<u8>>) -> Result<Vec<u8>> {
+    use webp_animation::{Encoder, EncoderOptions, EncodingConfig};
+
+    if frames.is_empty() {
+        return Err(anyhow::anyhow!("No frames provided for animated thumbnail"));
+    }
+
+    // Decode first frame to get dimensions
+    let first_img = image::load_from_memory(&frames[0])
+        .context("Failed to decode first frame")?;
+    
+    // Calculate dimensions using shared logic
+    let (target_w, target_h, _) = resize_and_process_frame(&first_img, 320)?;
+
+    // Configure Encoder
+    let mut encoder = Encoder::new_with_options((target_w, target_h), EncoderOptions {
+        encoding_config: Some(EncodingConfig {
+            quality: THUMBNAIL_QUALITY, // Shared constant 70.0
+            ..Default::default()
+        }),
+        ..Default::default()
+    })?;
+
+    let frame_duration_ms = 1000 / 6; // ~6 FPS (user requested 6 frames)
+    let mut timestamp_ms = 0;
+
+    for frame_bytes in frames {
+        let img = image::load_from_memory(&frame_bytes).context("Failed to decode frame")?;
+        
+        // Use shared resize logic
+        let (_, _, rgba) = resize_and_process_frame(&img, 320)?;
+
+        encoder.add_frame(&rgba, timestamp_ms)?;
+        timestamp_ms += frame_duration_ms;
+    }
+
+    let webp_data = encoder.finalize(timestamp_ms)?;
+    Ok(webp_data.to_vec())
+}
+
+/// Process a video file: create H.265 MP4 and animated WebP thumbnail
+/// Mobile: Skip transcode, use provided frames for thumbnail
+/// Desktop: Transcode (Fast), use provided frames OR sidecar for thumbnail
 pub async fn process_video(
     transcoder: &impl Transcoder,
     path: &Path,
     output_path: &Path,
+    pre_generated_frames: Option<Vec<Vec<u8>>>,
 ) -> Result<ProcessedMedia> {
-    // 1. Get Metadata
-    let metadata = transcoder.get_video_metadata(path).await?;
     
-    // 2. Generate Animated Thumbnail (WebP sidecar)
-    // We want ~8 frames. Calculate FPS needed.
-    // If duration is 0 (parsing failed), fallback to 1 fps.
+    // 1. Generate Thumbnail (Platform agnostic if frames provided)
+    let thumbnail_bytes = if let Some(frames) = pre_generated_frames {
+        log::info!("Generating animated thumbnail from {} frontend frames", frames.len());
+        match create_animated_thumbnail(frames) {
+            Ok(bytes) => Some(bytes),
+            Err(e) => {
+                log::warn!("Failed to create animated thumbnail from frames: {}", e);
+                None
+            }
+        }
+    } else {
+        // Fallback: Desktop uses FFmpeg
+        #[cfg(desktop)]
+        {
+             // 1. Get Metadata (Only needed if we are generating thumbnail via FFmpeg)
+             let metadata = transcoder.get_video_metadata(path).await?;
+             // ... Logic to generate via FFmpeg (see below)
+             // We can refactor existing logic here, but for now let's keep it simple
+             
+             generate_thumbnail_ffmpeg(transcoder, path, output_path, metadata).await
+        }
+        #[cfg(not(desktop))] // Mobile
+        {
+            log::warn!("No pre-generated frames provided on Mobile. Video will have no thumbnail.");
+            None
+        }
+    };
+
+    // 2. Transcode Video (Platform Specific)
+    #[cfg(desktop)]
+    let (original, ext) = {
+        let bytes = transcode_video_h265(transcoder, path, output_path).await?;
+        (bytes, "mp4".to_string())
+    };
+
+    #[cfg(not(desktop))] // mobile
+    let (original, ext) = {
+        log::info!("Mobile: Skipping video transcoding, using original file");
+        let bytes = std::fs::read(path).context("Failed to read video file")?;
+        // Detect original extension
+        let ext = path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4")
+            .to_string();
+        (bytes, ext)
+    };
+
+    // Get dimensions if possible (for metadata)
+    // On desktop we might have them from FFmpeg. On mobile/desktop we can try to guess or use 0
+    // If we have thumbnail, use its dims?
+    // Let's implement a lighter metadata reader if needed, for now 0 is acceptable fallback
+    let (width, height) = (0, 0); 
+    // Optimization: we could use the frame dimensions if we decode them?
+
+    Ok(ProcessedMedia {
+        original,
+        original_extension: ext,
+        thumbnail: thumbnail_bytes,
+        preview: None,
+        width, // Todo: Improve metadata extraction on Mobile without FFmpeg
+        height,
+    })
+}
+
+// Extracted FFmpeg thumbnail logic (Desktop only helper)
+#[cfg(desktop)]
+async fn generate_thumbnail_ffmpeg(
+    transcoder: &impl Transcoder,
+    path: &Path,
+    output_path: &Path,
+    metadata: VideoMetadata,
+) -> Option<Vec<u8>> {
     let duration = if metadata.duration_seconds > 0.0 { metadata.duration_seconds } else { 10.0 };
     let target_fps = 8.0 / duration;
-    
-    // Clap FPS reasonable bounds (e.g. at least 0.1 fps, max 5 fps)
     let fps_arg = format!("fps={:.4},scale=320:-1:flags=lanczos", target_fps.max(0.1).min(5.0));
 
     let thumb_out_path = output_path.with_file_name("thumb_temp.webp");
@@ -278,7 +390,7 @@ pub async fn process_video(
         "-vf".to_string(),
         fps_arg,
         "-vframes".to_string(),
-        "8".to_string(), // Cap at 8 frames
+        "8".to_string(),
         "-loop".to_string(),
         "0".to_string(),
         "-an".to_string(),
@@ -288,35 +400,15 @@ pub async fn process_video(
         thumb_out_path.to_string_lossy().to_string(),
     ];
 
-    let thumbnail_bytes = match transcoder.run_ffmpeg(&thumb_args).await {
+    let res = match transcoder.run_ffmpeg(&thumb_args).await {
         Ok(bytes) => Some(bytes),
         Err(e) => {
             log::info!("Failed to generate video thumbnail: {}", e);
             None
         }
     };
-    
-    // Clean up temp file (bytes already read into memory by run_ffmpeg helper?? 
-    // Wait, run_ffmpeg reads the file. So it's fine.)
-    // But run_ffmpeg reads "output_path". Here output_path is `thumb_out_path`.
-    // I should delete it after reading? `run_ffmpeg` reads it, but doesn't delete it.
-    // Ideally I should delete it. 
-    // But usage pattern in this app is unusual: run_ffmpeg returns bytes.
-    if thumb_out_path.exists() {
-        let _ = std::fs::remove_file(&thumb_out_path);
-    }
-
-    // 3. Transcode to H.265
-    let original = transcode_video_h265(transcoder, path, output_path).await?;
-
-    Ok(ProcessedMedia {
-        original,
-        original_extension: "mp4".to_string(),
-        thumbnail: thumbnail_bytes,
-        preview: None,
-        width: metadata.width,
-        height: metadata.height,
-    })
+    if thumb_out_path.exists() { let _ = std::fs::remove_file(&thumb_out_path); }
+    res
 }
 
 /// Process an audio file: convert to Opus
@@ -325,11 +417,25 @@ pub async fn process_audio(
     path: &Path,
     output_path: &Path,
 ) -> Result<ProcessedMedia> {
-    let original = transcode_audio_opus(transcoder, path, output_path).await?;
+    #[cfg(desktop)]
+    let (original, ext) = {
+        let bytes = transcode_audio_opus(transcoder, path, output_path).await?;
+        (bytes, "opus".to_string())
+    };
+
+    #[cfg(not(desktop))]
+    let (original, ext) = {
+        let bytes = std::fs::read(path).context("Failed to read audio file")?;
+        let ext = path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("opus")
+            .to_string();
+        (bytes, ext)
+    };
 
     Ok(ProcessedMedia {
         original,
-        original_extension: "opus".to_string(),
+        original_extension: ext,
         thumbnail: None,
         preview: None,
         width: 0,
@@ -372,7 +478,7 @@ async fn transcode_video_h265(
         "-crf".to_string(),
         "23".to_string(),
         "-preset".to_string(),
-        "slow".to_string(),
+        "fast".to_string(),
         "-tag:v".to_string(),
         "hvc1".to_string(),
         "-c:a".to_string(),

@@ -26,5 +26,15 @@
       ]
     },
     "stronghold:default"
-  ]
+  ],
+  "fs": {
+    "scope": [
+      "$HOME/**",
+      "$DOWNLOADS/**",
+      "$DESKTOP/**",
+      "$DOCUMENTS/**",
+      "$PICTURES/**",
+      "$VIDEOS/**"
+    ]
+  }
 }

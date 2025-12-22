@@ -8,7 +8,7 @@ import { ShareVaultDialog } from '@/components/vault/ShareVaultDialog';
 import { getActiveVault, renameVault, VaultPublic } from '@/lib/vault';
 import { createFileRoute, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
-import { ChevronLeft, Plus, ShareIcon } from 'lucide-react';
+import { ChevronLeft, Plus, Share2Icon, ShareIcon } from 'lucide-react';
 import { createContext, useContext, useEffect, useState } from 'react';
 
 export const Route = createFileRoute('/gallery')({
@@ -25,7 +25,11 @@ const GalleryLayoutContext = createContext<GalleryLayoutContextType | null>(null
 
 export function useGalleryLayout() {
   const ctx = useContext(GalleryLayoutContext);
-  if (!ctx) throw new Error('useGalleryLayout must be used within GalleryLayout');
+  // Return dummy context if missing to prevent crash during route transitions or incorrect nesting
+  if (!ctx) {
+    console.warn('useGalleryLayout called outside provider');
+    return { setSubtitle: () => { }, onMemorySaved: () => { } };
+  }
   return ctx;
 }
 
@@ -126,7 +130,7 @@ function GalleryLayout() {
                     vaultId={activeVault.id}
                     trigger={
                       <Button variant="glass" className="h-9 w-9 p-0 rounded-full">
-                        <ShareIcon className="w-5 h-5 text-foreground" />
+                        <Share2Icon className="w-5 h-5 text-foreground" />
                       </Button>
                     }
                   />
@@ -150,17 +154,19 @@ function GalleryLayout() {
           <div className="fixed bottom-0 left-0 right-0 pb-safe z-40 pointer-events-none">
             {/* Nav is centered, plus button is positioned absolutely to the right. Use pointer-events-auto for children. */}
             <div className="relative bottom-6 flex justify-center w-full pointer-events-auto">
-              <GalleryBottomNav currentView={currentView} />
+              <div className="relative">
+                <GalleryBottomNav currentView={currentView} />
 
-              {isMemoriesListView && (
-                <Button
-                  onClick={openMemoryEditor}
-                  size="icon"
-                  className="absolute left-full ml-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 backdrop-blur-3xl transition-all"
-                >
-                  <Plus className="size-5" />
-                </Button>
-              )}
+                {isMemoriesListView && (
+                  <Button
+                    onClick={openMemoryEditor}
+                    size="icon"
+                    className="absolute left-full ml-3 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 backdrop-blur-3xl transition-all"
+                  >
+                    <Plus className="size-5" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         )}
