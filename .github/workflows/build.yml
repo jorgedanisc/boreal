@@ -212,8 +212,14 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode -o certificate.p12
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE secret is not set. Skipping code signing."
+            echo "SKIP_SIGNING=true" >> $GITHUB_ENV
+            exit 0
+          fi
+          echo "$APPLE_CERTIFICATE" | base64 -d > certificate.p12
           ls -l certificate.p12
+          file certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -223,7 +229,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: verify certificate
-        if: contains(inputs.platform, 'macos') && inputs.sign-binaries
+        if: contains(inputs.platform, 'macos') && inputs.sign-binaries && env.SKIP_SIGNING != 'true'
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')

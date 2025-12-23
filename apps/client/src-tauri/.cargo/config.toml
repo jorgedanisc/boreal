@@ -1,5 +1,0 @@
-# Desktop build configuration
-# Android-specific Cargo config is generated dynamically by android-env.sh during Android builds
-
-[build]
-target = "aarch64-apple-darwin"
