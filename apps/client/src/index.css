@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/source-sans-3";
+@import "@fontsource/metropolis";
+@import "@fontsource/noto-sans";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -88,25 +90,57 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     font-family: "Source Sans 3 Variable", sans-serif;
     @apply bg-background text-foreground;
   }
+
   html {
     @apply font-sans;
   }
 
-  .pt-safe { padding-top: env(safe-area-inset-top); }
-  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-  .pl-safe { padding-left: env(safe-area-inset-left); }
-  .pr-safe { padding-right: env(safe-area-inset-right); }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
 
-  .mt-safe { margin-top: env(safe-area-inset-top); }
-  .mb-safe { margin-bottom: env(safe-area-inset-bottom); }
-  .ml-safe { margin-left: env(safe-area-inset-left); }
-  .mr-safe { margin-right: env(safe-area-inset-right); }
-  
-  .h-safe { height: env(safe-area-inset-top); }
-  .min-h-screen-safe { min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
-  .h-screen-safe { height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .pl-safe {
+    padding-left: env(safe-area-inset-left);
+  }
+
+  .pr-safe {
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .mt-safe {
+    margin-top: env(safe-area-inset-top);
+  }
+
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+
+  .ml-safe {
+    margin-left: env(safe-area-inset-left);
+  }
+
+  .mr-safe {
+    margin-right: env(safe-area-inset-right);
+  }
+
+  .h-safe {
+    height: env(safe-area-inset-top);
+  }
+
+  .min-h-screen-safe {
+    min-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+
+  .h-screen-safe {
+    height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
 }

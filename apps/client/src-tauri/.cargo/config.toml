@@ -1,0 +1,16 @@
+# Cargo configuration for Boreal
+# This prevents cargo from trying to cross-compile for mobile targets during desktop development
+
+# Default target for development (macOS arm64)
+# Comment this out when building for other desktop platforms
+[build]
+# Uncomment if you want to force native host target:
+# target = "aarch64-apple-darwin"
+
+# Linker configuration for cross-compilation
+[target.aarch64-linux-android]
+# This target is only valid when building with Android NDK
+# Cargo will skip it during desktop development due to cfg guards in Cargo.toml
+
+[target.aarch64-apple-ios]
+# This target is only valid when building for iOS

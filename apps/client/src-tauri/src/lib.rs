@@ -1,6 +1,8 @@
 mod cache;
 mod crypto;
 mod db;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod embedding;
 mod exif_extractor;
 mod file_filter;
 mod image_processing;
@@ -105,6 +107,8 @@ async fn load_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    embedding_state: State<'_, embedding::EmbeddingState>,
     id: String,
 ) -> Result<(), String> {
     // 1. Get config from JSON (credentials only)
@@ -170,11 +174,15 @@ async fn load_vault(
     *state.db.lock().await = Some(conn);
     *state.config.lock().await = Some(config);
 
-    // 9. Background: Download and merge manifest from S3, then push updates
+    // 9. Background: Download and merge manifest from S3, then push updates, then embed
     // (This is done async after returning to not block UI)
     let storage_clone = state.storage.lock().await.clone();
     let db_clone = state.db.clone();
     let config_clone = state.config.lock().await.clone();
+    let app_dir_clone = app_dir.clone();
+    
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let embedding_state_clone = embedding_state.inner().clone();
 
     tokio::spawn(async move {
         if let (Some(storage), Some(config)) = (storage_clone, config_clone) {
@@ -198,6 +206,29 @@ async fn load_vault(
                         sync_manifest_upload_internal(&storage, &db_clone, &config).await
                     {
                         log::info!("[Manifest Sync] Background upload failed: {}", e);
+                    }
+                    
+                    // 3. Embed cached photos (desktop only)
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    {
+                        let result = embed_all_photos_internal(
+                            &app_dir_clone,
+                            &config.id,
+                            &embedding_state_clone
+                        ).await;
+                        match result {
+                            Ok((embedded, skipped, no_cache)) => {
+                                if embedded > 0 {
+                                    log::info!(
+                                        "[AI] Embedded {} photos after manifest sync ({} skipped, {} not cached)",
+                                        embedded, skipped, no_cache
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("[AI] Embedding failed: {}", e);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -336,11 +367,22 @@ async fn import_vault_step2_load(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    embedding_state: State<'_, embedding::EmbeddingState>,
     vault_id: String,
 ) -> Result<(), String> {
-    load_vault(app, state, cache_state, vault_id)
-        .await
-        .map_err(|e| format!("Failed to activate vault: {}", e))
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        load_vault(app, state, cache_state, embedding_state, vault_id)
+            .await
+            .map_err(|e| format!("Failed to activate vault: {}", e))
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        load_vault(app, state, cache_state, vault_id)
+            .await
+            .map_err(|e| format!("Failed to activate vault: {}", e))
+    }
 }
 
 /// Step 3: Sync manifest from S3 (STRICT - fails if no manifest)
@@ -358,6 +400,8 @@ async fn import_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
     log::info!("[Import] Starting vault import...");
@@ -394,12 +438,24 @@ async fn import_vault(
 
     // Activate vault (loads DB, sets up storage)
     log::info!("[Import] Activating vault (load_vault)...");
-    load_vault(app, state.clone(), cache_state, id)
-        .await
-        .map_err(|e| {
-            log::info!("[Import] FAILED to activate vault: {}", e);
-            format!("Failed to activate vault: {}", e)
-        })?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        load_vault(app, state.clone(), cache_state, embedding_state, id)
+            .await
+            .map_err(|e| {
+                log::info!("[Import] FAILED to activate vault: {}", e);
+                format!("Failed to activate vault: {}", e)
+            })?;
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        load_vault(app, state.clone(), cache_state, id)
+            .await
+            .map_err(|e| {
+                log::info!("[Import] FAILED to activate vault: {}", e);
+                format!("Failed to activate vault: {}", e)
+            })?;
+    }
     log::info!("[Import] Vault activated successfully.");
 
     // STRICT SYNC: For imported vaults, manifest MUST exist on S3
@@ -597,6 +653,8 @@ async fn bootstrap_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
     use crate::vault::BootstrapConfig;
@@ -636,7 +694,14 @@ async fn bootstrap_vault(
     store::save_vault(&app, &config)?;
 
     // 6. Activate
-    load_vault(app, state, cache_state, id).await
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        load_vault(app, state, cache_state, embedding_state, id).await
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        load_vault(app, state, cache_state, id).await
+    }
 }
 
 #[tauri::command]
@@ -1582,8 +1647,7 @@ async fn open_cache_folder(app: AppHandle, state: State<'_, AppState>) -> Result
     let cache_dir = app_dir
         .join("vaults")
         .join(&config.id)
-        .join("cache")
-        .join("thumbnails");
+        .join("cache");
 
     if !cache_dir.exists() {
         std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
@@ -1851,7 +1915,530 @@ async fn cancel_qr_import(qr_state: State<'_, QrTransferManagerState>) -> Result
     Ok(())
 }
 
+// === Embedding / Semantic Search commands (desktop only) ===
+// Models are bundled with the app - no download needed
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[derive(serde::Serialize)]
+struct EmbeddingModelsStatus {
+    available: bool,
+    ready: bool,
+    indexed_count: usize,
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn get_embedding_status(
+    app: AppHandle,
+    embedding_state: State<'_, embedding::EmbeddingState>,
+) -> Result<EmbeddingModelsStatus, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?;
+
+    let available = embedding::models_exist(&resource_dir);
+    let ready = embedding_state.is_ready().await;
+    let index = embedding_state.index.lock().await;
+
+    Ok(EmbeddingModelsStatus {
+        available,
+        ready,
+        indexed_count: index.len(),
+    })
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn init_embedding_models(
+    app: AppHandle,
+    embedding_state: State<'_, embedding::EmbeddingState>,
+) -> Result<(), String> {
+    // Already initialized?
+    if embedding_state.is_ready().await {
+        return Ok(());
+    }
+
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?;
+
+    // Check if bundled models are available
+    if !embedding::models_exist(&resource_dir) {
+        return Err("Embedding models not bundled. Please rebuild the application.".to_string());
+    }
+
+    let (vision_path, text_path, tokenizer_path) = embedding::get_model_paths(&resource_dir);
+
+    log::info!("Loading vision embedding model from {:?}", vision_path);
+    log::info!("Loading text embedding model from {:?}", text_path);
+
+    // Load models in blocking tasks
+    let vision_path_clone = vision_path.clone();
+    let vision_result = tauri::async_runtime::spawn_blocking(move || {
+        embedding::VisionEmbedder::new(&vision_path_clone)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    let vision = vision_result?;
+
+    let text_path_clone = text_path.clone();
+    let tokenizer_path_clone = tokenizer_path.clone();
+    let text_result = tauri::async_runtime::spawn_blocking(move || {
+        embedding::TextEmbedder::new(&text_path_clone, &tokenizer_path_clone)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
+
+    let text = text_result?;
+
+    // Store in state
+    *embedding_state.vision.lock().await = Some(vision);
+    *embedding_state.text.lock().await = Some(text);
+
+    // Load existing embeddings from DB into index
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_ids = vault::store::get_vault_ids(&app)?;
+
+    let mut index = embedding_state.index.lock().await;
+    for (vault_id, _) in vault_ids {
+        let db_path = app_dir.join("vaults").join(&vault_id).join("manifest.db");
+        if db_path.exists() {
+            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                let mut stmt = conn
+                    .prepare("SELECT photo_id, embedding FROM embeddings")
+                    .map_err(|e| e.to_string())?;
+                let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+                while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                    let photo_id: String = row.get(0).map_err(|e| e.to_string())?;
+                    let embedding_blob: Vec<u8> = row.get(1).map_err(|e| e.to_string())?;
+                    // Convert blob to Vec<f32>
+                    if embedding_blob.len() % 4 == 0 {
+                        let emb: Vec<f32> = embedding_blob
+                            .chunks_exact(4)
+                            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                            .collect();
+                        index.insert_vec(photo_id, emb);
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "Embedding models initialized. {} embeddings loaded into index.",
+        index.len()
+    );
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[derive(serde::Serialize)]
+struct SemanticSearchResult {
+    id: String,
+    score: f32,
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn search_photos_semantic(
+    embedding_state: State<'_, embedding::EmbeddingState>,
+    query: String,
+    limit: usize,
+) -> Result<Vec<SemanticSearchResult>, String> {
+    log::info!("Semantic search for: '{}' (limit: {})", query, limit);
+    
+    // Get text embedder (mutable)
+    let mut text_guard = embedding_state.text.lock().await;
+    let text_embedder = text_guard
+        .as_mut()
+        .ok_or("Text embedding model not initialized")?;
+
+    // Embed query
+    let query_embedding = text_embedder.embed_query(&query)?;
+    log::debug!("Query embedding computed (dim: {})", query_embedding.len());
+
+    // Search index
+    let index = embedding_state.index.lock().await;
+    log::info!("Searching index with {} embeddings", index.len());
+    
+    let results = index.search(&query_embedding, limit);
+    
+    // Log score distribution to understand the range
+    if !results.is_empty() {
+        let max_score = results.first().map(|(_, s)| *s).unwrap_or(0.0);
+        let min_score = results.last().map(|(_, s)| *s).unwrap_or(0.0);
+        log::info!("Score range: {:.3} to {:.3} (top {} results)", max_score, min_score, results.len());
+    }
+
+    // Filter out negative scores (completely irrelevant results)
+    const MIN_SCORE: f32 = 0.0525;
+    let filtered: Vec<_> = results
+        .into_iter()
+        .filter(|(_, score)| *score >= MIN_SCORE)
+        .map(|(id, score)| SemanticSearchResult { id, score })
+        .collect();
+    
+    log::info!("Returning {} results after filtering (threshold: {})", filtered.len(), MIN_SCORE);
+
+    Ok(filtered)
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn get_embedding_count(
+    embedding_state: State<'_, embedding::EmbeddingState>,
+) -> Result<usize, String> {
+    let index = embedding_state.index.lock().await;
+    Ok(index.len())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn embed_photo_for_search(
+    _app: AppHandle,
+    state: State<'_, AppState>,
+    cache_state: State<'_, CacheState>,
+    embedding_state: State<'_, embedding::EmbeddingState>,
+    photo_id: String,
+) -> Result<(), String> {
+    // Check if already embedded
+    {
+        let index = embedding_state.index.lock().await;
+        if index.contains(&photo_id) {
+            return Ok(());
+        }
+    }
+
+    // Get thumbnail from cache
+    let thumbnail_bytes = {
+        let cache_guard = cache_state.thumbnail_cache.lock().await;
+        let cache = cache_guard.as_ref().ok_or("Thumbnail cache not initialized")?;
+
+        // Get from cache or download
+        let config_guard = state.config.lock().await;
+        let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+
+        let storage_guard = state.storage.lock().await;
+        let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+
+        // Look up thumbnail_key from DB
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+
+        let thumbnail_key: String = conn
+            .query_row(
+                "SELECT thumbnail_key FROM photos WHERE id = ?1",
+                [&photo_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Photo not found: {}", e))?;
+
+        // Try cache first
+        if let Some(bytes) = cache.get(&photo_id) {
+            bytes
+        } else {
+            // Download and decrypt
+            let enc_bytes = storage
+                .download_file(&thumbnail_key)
+                .await
+                .map_err(|e| format!("Failed to download thumbnail: {}", e))?;
+
+            let vault_key = BASE64
+                .decode(&config.vault_key)
+                .map_err(|e| format!("Invalid vault key: {}", e))?;
+            let key_arr: [u8; 32] = vault_key
+                .try_into()
+                .map_err(|_| "Invalid key length".to_string())?;
+
+            let bytes = crypto::decrypt(&enc_bytes, &key_arr)
+                .map_err(|e| format!("Decrypt failed: {}", e))?;
+
+            // Cache it (using put, ignore result)
+            let _ = cache.put(&photo_id, &bytes);
+            bytes
+        }
+    };
+
+    // Preprocess image
+    let preprocessed = embedding::preprocess::preprocess_image_bytes(&thumbnail_bytes)?;
+
+    // Get vision embedder and generate embedding
+    let emb = {
+        let mut vision_guard = embedding_state.vision.lock().await;
+        let vision = vision_guard
+            .as_mut()
+            .ok_or("Vision embedding model not initialized")?;
+        vision.embed(preprocessed)?
+    };
+
+    // Store in DB
+    {
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+
+        // Convert f32 vec to bytes
+        let embedding_bytes: Vec<u8> = emb
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO embeddings (photo_id, embedding, model_version, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                photo_id,
+                embedding_bytes,
+                "nomic-embed-vision-v1.5",
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )
+        .map_err(|e| format!("Failed to store embedding: {}", e))?;
+    }
+
+    // Add to index
+    {
+        let mut index = embedding_state.index.lock().await;
+        index.insert(photo_id, emb);
+    }
+
+    Ok(())
+}
+
+/// Internal helper for embedding photos from a single vault
+/// Returns (embedded_count, skipped_count, no_cache_count)
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn embed_all_photos_internal(
+    app_dir: &std::path::Path,
+    vault_id: &str,
+    embedding_state: &embedding::EmbeddingState,
+) -> Result<(usize, usize, usize), String> {
+    let vault_dir = app_dir.join("vaults").join(vault_id);
+    let db_path = vault_dir.join("manifest.db");
+    let cache_dir = vault_dir.join("cache");
+    
+    if !db_path.exists() {
+        return Ok((0, 0, 0));
+    }
+    
+    // Get all photo IDs and media types from this vault
+    let photos: Vec<(String, String)> = {
+        let conn = rusqlite::Connection::open(&db_path)
+            .map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT id, COALESCE(media_type, 'image') FROM photos")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    
+    let mut embedded_count = 0;
+    let mut skipped_count = 0;
+    let mut no_cache_count = 0;
+    let mut audio_count = 0;
+    
+    for (photo_id, media_type) in photos {
+        // Skip audio files - they have no thumbnails to embed
+        if media_type == "audio" {
+            audio_count += 1;
+            continue;
+        }
+        
+        // Check if already embedded
+        {
+            let index = embedding_state.index.lock().await;
+            if index.contains(&photo_id) {
+                skipped_count += 1;
+                continue;
+            }
+        }
+        
+        // Try to read thumbnail from disk cache
+        let cache_path = cache_dir.join(format!("{}.webp", &photo_id));
+        let thumbnail_bytes = if cache_path.exists() {
+            std::fs::read(&cache_path).ok()
+        } else {
+            log::debug!("Cache miss: {}", cache_path.display());
+            None
+        };
+        
+        if let Some(bytes) = thumbnail_bytes {
+            // Preprocess and embed
+            match embedding::preprocess::preprocess_image_bytes(&bytes) {
+                Ok(preprocessed) => {
+                    let mut vision_guard = embedding_state.vision.lock().await;
+                    if let Some(vision) = vision_guard.as_mut() {
+                        match vision.embed(preprocessed) {
+                            Ok(emb) => {
+                                // Store in DB
+                                if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                                    let embedding_bytes: Vec<u8> = emb
+                                        .iter()
+                                        .flat_map(|f| f.to_le_bytes())
+                                        .collect();
+                                    conn.execute(
+                                        "INSERT OR REPLACE INTO embeddings (photo_id, embedding, model_version, created_at) VALUES (?1, ?2, ?3, ?4)",
+                                        rusqlite::params![
+                                            photo_id,
+                                            embedding_bytes,
+                                            "nomic-embed-vision-v1.5",
+                                            chrono::Utc::now().to_rfc3339()
+                                        ],
+                                    ).ok();
+                                }
+                                
+                                // Add to index
+                                let mut index = embedding_state.index.lock().await;
+                                index.insert(photo_id.clone(), emb);
+                                embedded_count += 1;
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to embed photo {}: {}", photo_id, e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to preprocess photo {}: {}", photo_id, e);
+                }
+            }
+        } else {
+            no_cache_count += 1;
+        }
+    }
+    
+    Ok((embedded_count, skipped_count, no_cache_count))
+}
+
+/// Embed all photos in all vaults (background task)
+/// Scans the disk cache directory for cached thumbnails
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[tauri::command]
+async fn embed_all_photos(
+    app: AppHandle,
+    embedding_state: State<'_, embedding::EmbeddingState>,
+) -> Result<usize, String> {
+    log::info!("Starting batch photo embedding from disk cache...");
+    
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_ids = vault::store::get_vault_ids(&app)?;
+    
+    let mut embedded_count = 0;
+    let mut skipped_count = 0;
+    let mut no_cache_count = 0;
+    let mut audio_count = 0;
+    
+    for (vault_id, _) in vault_ids {
+        let vault_dir = app_dir.join("vaults").join(&vault_id);
+        let db_path = vault_dir.join("manifest.db");
+        let cache_dir = vault_dir.join("cache");
+        
+        if !db_path.exists() {
+            continue;
+        }
+        
+        // Get all photo IDs and media types from this vault
+        let photos: Vec<(String, String)> = {
+            let conn = rusqlite::Connection::open(&db_path)
+                .map_err(|e| e.to_string())?;
+            let mut stmt = conn
+                .prepare("SELECT id, COALESCE(media_type, 'image') FROM photos")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        
+        let images_videos = photos.iter().filter(|(_, t)| t != "audio").count();
+        log::info!("Vault {} has {} photos ({} images/videos, {} audio)", 
+                   vault_id, photos.len(), images_videos, photos.len() - images_videos);
+        
+        for (photo_id, media_type) in photos {
+            // Skip audio files - they have no thumbnails to embed
+            if media_type == "audio" {
+                audio_count += 1;
+                continue;
+            }
+            
+            // Check if already embedded
+            {
+                let index = embedding_state.index.lock().await;
+                if index.contains(&photo_id) {
+                    skipped_count += 1;
+                    continue;
+                }
+            }
+            
+            // Try to read thumbnail from disk cache
+            let cache_path = cache_dir.join(format!("{}.webp", &photo_id));
+            let thumbnail_bytes = if cache_path.exists() {
+                std::fs::read(&cache_path).ok()
+            } else {
+                None
+            };
+            
+            if let Some(bytes) = thumbnail_bytes {
+                // Preprocess and embed
+                match embedding::preprocess::preprocess_image_bytes(&bytes) {
+                    Ok(preprocessed) => {
+                        let mut vision_guard = embedding_state.vision.lock().await;
+                        if let Some(vision) = vision_guard.as_mut() {
+                            match vision.embed(preprocessed) {
+                                Ok(emb) => {
+                                    // Store in DB
+                                    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                                        let embedding_bytes: Vec<u8> = emb
+                                            .iter()
+                                            .flat_map(|f| f.to_le_bytes())
+                                            .collect();
+                                        conn.execute(
+                                            "INSERT OR REPLACE INTO embeddings (photo_id, embedding, model_version, created_at) VALUES (?1, ?2, ?3, ?4)",
+                                            rusqlite::params![
+                                                photo_id,
+                                                embedding_bytes,
+                                                "nomic-embed-vision-v1.5",
+                                                chrono::Utc::now().to_rfc3339()
+                                            ],
+                                        ).ok();
+                                    }
+                                    
+                                    // Add to index
+                                    let mut index = embedding_state.index.lock().await;
+                                    index.insert(photo_id.clone(), emb);
+                                    embedded_count += 1;
+                                    
+                                    if embedded_count % 10 == 0 {
+                                        log::info!("Embedded {} photos so far...", embedded_count);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to embed photo {}: {}", photo_id, e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to preprocess photo {}: {}", photo_id, e);
+                    }
+                }
+            } else {
+                no_cache_count += 1;
+            }
+        }
+    }
+    
+    log::info!("Batch embedding complete: {} embedded, {} skipped (already done), {} audio (no thumbnail), {} not in cache", 
+               embedded_count, skipped_count, audio_count, no_cache_count);
+    Ok(embedded_count)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+
 pub fn run() {
     #[cfg(desktop)]
     use tauri::Emitter;
@@ -1943,6 +2530,8 @@ pub fn run() {
         .manage(QrTransferManagerState {
             manager: Arc::new(qr_transfer::QrTransferManager::new()),
         })
+        // Embedding state (desktop only, but we manage an empty placeholder for mobile)
+        .manage(embedding::EmbeddingState::new(std::path::PathBuf::new()))
         .invoke_handler(tauri::generate_handler![
             import_vault,
             import_vault_step1_save,
@@ -2010,7 +2599,14 @@ pub fn run() {
             get_all_photos,
             get_all_photos_with_geolocation,
             get_thumbnail_for_vault,
-            update_photo_metadata
+            update_photo_metadata,
+            // Embedding / Semantic Search commands (desktop only)
+            get_embedding_status,
+            get_embedding_count,
+            init_embedding_models,
+            search_photos_semantic,
+            embed_photo_for_search,
+            embed_all_photos
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

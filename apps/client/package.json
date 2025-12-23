@@ -12,12 +12,15 @@
     "android:dev": "./scripts/android-env.sh bun tauri android dev",
     "android:build": "./scripts/android-env.sh bun tauri android build --target aarch64",
     "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs --version 7.1.2 --targets x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,aarch64-apple-darwin,x86_64-apple-darwin",
-    "tauri:build": "npm run fetch:ffmpeg && tauri build",
+    "fetch:models": "node scripts/fetch-models.mjs",
+    "tauri:build": "npm run fetch:ffmpeg && npm run fetch:models && tauri build",
     "tauri": "tauri"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",
     "@fontsource-variable/source-sans-3": "^5.2.9",
+    "@fontsource/metropolis": "^5.2.5",
+    "@fontsource/noto-sans": "^5.2.10",
     "@tabler/icons-react": "^3.35.0",
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/react-router": "^1.141.2",

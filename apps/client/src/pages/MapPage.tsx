@@ -1,67 +1,30 @@
-import { Button } from '@/components/ui/button';
 import { GlobalPhotoSlider } from '@/components/gallery/PhotoLightbox';
-import { getAllPhotosWithGeolocation, getThumbnailForVault, GeoPhoto } from '@/lib/vault';
+import { Button } from '@/components/ui/button';
+import { GeoPhoto, getAllPhotosWithGeolocation, getThumbnailForVault } from '@/lib/vault';
 import { useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
-import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, NavigationIcon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
-import maplibregl from 'maplibre-gl';
+import maplibregl, { GeoJSONSource } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { motion } from 'motion/react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import 'react-photo-view/dist/react-photo-view.css';
 
-// Cluster interface
-interface PhotoCluster {
-  id: string;
-  latitude: number;
-  longitude: number;
-  photos: GeoPhoto[];
-  thumbnail?: string;
-}
-
-// Grid-based spatial clustering
-function clusterPhotos(photos: GeoPhoto[], zoomLevel: number): PhotoCluster[] {
-  // Cell size decreases as zoom increases (step-wise to prevent drifting)
-  const discreteZoom = Math.floor(zoomLevel);
-  const cellSize = 360 / Math.pow(2, discreteZoom + 1);
-  const clusters = new Map<string, GeoPhoto[]>();
-
-  for (const photo of photos) {
-    const cellX = Math.floor(photo.longitude / cellSize);
-    const cellY = Math.floor(photo.latitude / cellSize);
-    const key = `${cellX},${cellY}`;
-
-    if (!clusters.has(key)) {
-      clusters.set(key, []);
-    }
-    clusters.get(key)!.push(photo);
-  }
-
-  return Array.from(clusters.entries()).map(([key, photosInCluster]) => {
-    // Calculate centroid
-    const avgLat = photosInCluster.reduce((sum, p) => sum + p.latitude, 0) / photosInCluster.length;
-    const avgLng = photosInCluster.reduce((sum, p) => sum + p.longitude, 0) / photosInCluster.length;
-
-    return {
-      id: key,
-      latitude: avgLat,
-      longitude: avgLng,
-      photos: photosInCluster,
-    };
-  });
-}
+const PHOTOS_SOURCE_ID = 'photos-source';
+const CLUSTER_LAYER_ID = 'clusters';
 
 export function MapPage() {
   const navigate = useNavigate();
   const [isDesktop, setIsDesktop] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  const markersOnScreenRef = useRef<Map<string, maplibregl.Marker>>(new Map());
 
   const [photos, setPhotos] = useState<GeoPhoto[]>([]);
+  const [photosById, setPhotosById] = useState<Map<string, GeoPhoto>>(new Map());
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  const [zoomLevel, setZoomLevel] = useState(2);
   const [isLoading, setIsLoading] = useState(true);
   const [locationError, setLocationError] = useState<string | null>(null);
 
@@ -88,8 +51,13 @@ export function MapPage() {
       const geoPhotos = await getAllPhotosWithGeolocation();
       setPhotos(geoPhotos);
 
-      // Load thumbnails for first few photos in each cluster (for preview)
-      const uniquePhotos = geoPhotos.slice(0, 50); // Limit initial load
+      // Build lookup map for quick access
+      const photoMap = new Map<string, GeoPhoto>();
+      geoPhotos.forEach(p => photoMap.set(p.id, p));
+      setPhotosById(photoMap);
+
+      // Load thumbnails for photos (for preview)
+      const uniquePhotos = geoPhotos.slice(0, 100); // Load more thumbnails for better coverage
       await Promise.all(uniquePhotos.map(async (p: GeoPhoto) => {
         try {
           const b64 = await getThumbnailForVault(p.id, p.vault_id);
@@ -109,24 +77,282 @@ export function MapPage() {
 
   const { i18n } = useTranslation();
 
+  // Create a marker element for a cluster or single photo
+  const createMarkerElement = useCallback((
+    photoIds: string[],
+    count: number,
+    onClick: () => void
+  ) => {
+    const firstPhotoId = photoIds[0];
+    const thumbnailSrc = thumbnails[firstPhotoId];
+
+    const el = document.createElement('div');
+    el.className = 'photo-marker';
+    el.style.cssText = `
+      width: 62px;
+      height: 66px;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+    `;
+
+    // Thumbnail container
+    const thumbContainer = document.createElement('div');
+    thumbContainer.style.cssText = `
+      width: 58px;
+      height: 58px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #1a1a1a;
+      border: 3px solid white;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      position: relative;
+    `;
+
+    if (thumbnailSrc) {
+      const img = document.createElement('img');
+      img.src = thumbnailSrc;
+      img.style.cssText = `
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      `;
+      thumbContainer.appendChild(img);
+    }
+
+    // Count badge
+    if (count > 1) {
+      const badge = document.createElement('div');
+      badge.textContent = count.toString();
+      badge.style.cssText = `
+        position: absolute;
+        bottom: 0px;
+        left: 0px;
+        color: white;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 5px;
+        border-radius: 4px;
+        min-width: 16px;
+        text-align: center;
+        text-shadow: 0 0 2px rgba(0,0,0,0.7);
+      `;
+      thumbContainer.appendChild(badge);
+    }
+
+    el.appendChild(thumbContainer);
+
+    // Pin pointer
+    const pointer = document.createElement('div');
+    pointer.style.cssText = `
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid white;
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+    `;
+    el.appendChild(pointer);
+
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onClick();
+    });
+
+    return el;
+  }, [thumbnails]);
+
+  // Update markers based on map's clustered features
+  // Uses first leaf coordinates for clusters to ensure accurate positioning
+  const updateMarkers = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !map.getSource(PHOTOS_SOURCE_ID)) return;
+
+    const newMarkers = new Map<string, maplibregl.Marker>();
+    const source = map.getSource(PHOTOS_SOURCE_ID) as GeoJSONSource;
+
+    // Query all visible features from the clustered source
+    const features = map.querySourceFeatures(PHOTOS_SOURCE_ID);
+
+    // Process features and resolve cluster positions
+    const markerPromises = features.map(async (feature) => {
+      const geometry = feature.geometry;
+      if (geometry.type !== 'Point') return null;
+
+      const centroidCoords = geometry.coordinates as [number, number];
+      const props = feature.properties;
+
+      // Determine if this is a cluster or single point
+      const isCluster = props?.cluster === true;
+      const clusterId = isCluster ? props.cluster_id : null;
+      const pointCount = isCluster ? props.point_count : 1;
+
+      // Create a unique key for this marker
+      const markerId = isCluster ? `cluster_${clusterId}` : `photo_${props?.photoId}`;
+
+      // For clusters, get the first leaf's actual coordinates instead of centroid
+      // This ensures markers appear at real photo locations
+      let markerCoords = centroidCoords;
+      let photoIds: string[] = [];
+      let clusterPhotos: GeoPhoto[] = [];
+
+      if (isCluster && clusterId !== null) {
+        try {
+          // Get the first leaf to use its actual coordinates
+          const leaves = await source.getClusterLeaves(clusterId, 1, 0);
+          if (leaves.length > 0) {
+            const leafGeometry = leaves[0].geometry;
+            if (leafGeometry.type === 'Point') {
+              markerCoords = leafGeometry.coordinates as [number, number];
+            }
+            const leafPhotoId = leaves[0].properties?.photoId;
+            if (leafPhotoId) {
+              photoIds = [leafPhotoId];
+              const photo = photosById.get(leafPhotoId);
+              if (photo) clusterPhotos = [photo];
+            }
+          }
+        } catch (e) {
+          // Fallback to firstPhotoId from cluster properties
+          const firstPhotoId = props?.firstPhotoId;
+          if (firstPhotoId) {
+            photoIds = [firstPhotoId];
+            const photo = photosById.get(firstPhotoId);
+            if (photo) {
+              clusterPhotos = [photo];
+              // Use the photo's actual coordinates
+              markerCoords = [photo.longitude, photo.latitude];
+            }
+          }
+        }
+      } else {
+        // Single point - use its coordinates directly
+        const photoId = props?.photoId;
+        if (photoId) {
+          photoIds = [photoId];
+          const photo = photosById.get(photoId);
+          if (photo) clusterPhotos = [photo];
+        }
+      }
+
+      if (photoIds.length === 0) return null;
+
+      return {
+        markerId,
+        markerCoords,
+        centroidCoords,
+        isCluster,
+        clusterId,
+        pointCount,
+        photoIds,
+        clusterPhotos
+      };
+    });
+
+    const resolvedMarkers = (await Promise.all(markerPromises)).filter(Boolean);
+
+    for (const markerData of resolvedMarkers) {
+      if (!markerData) continue;
+
+      const {
+        markerId,
+        markerCoords,
+        centroidCoords,
+        isCluster,
+        clusterId,
+        pointCount,
+        photoIds,
+        clusterPhotos
+      } = markerData;
+
+      // Check if we already have this marker
+      let marker = markersRef.current.get(markerId);
+
+      if (!marker) {
+        // Capture values for click handler closure
+        const capturedClusterId = clusterId;
+        const capturedIsCluster = isCluster;
+        const capturedCoords = markerCoords;
+        const capturedClusterPhotos = clusterPhotos;
+
+        const el = createMarkerElement(photoIds, pointCount, async () => {
+          const currentMap = mapRef.current;
+          if (!currentMap) return;
+
+          if (capturedIsCluster && capturedClusterId !== null) {
+            // Get cluster expansion zoom and fly to it
+            const currentSource = currentMap.getSource(PHOTOS_SOURCE_ID) as GeoJSONSource;
+            if (currentSource) {
+              try {
+                const expansionZoom = await currentSource.getClusterExpansionZoom(capturedClusterId);
+                currentMap.easeTo({
+                  center: capturedCoords,
+                  zoom: expansionZoom ?? currentMap.getZoom() + 2
+                });
+              } catch (e) {
+                // Fallback: just zoom in
+                currentMap.easeTo({
+                  center: capturedCoords,
+                  zoom: currentMap.getZoom() + 2
+                });
+              }
+            }
+          } else {
+            // Single photo - open lightbox
+            setLightboxPhotos(capturedClusterPhotos);
+            setLightboxIndex(0);
+            setLightboxOpen(true);
+          }
+        });
+
+        marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat(markerCoords);
+
+        markersRef.current.set(markerId, marker);
+      } else {
+        // Update existing marker position if it changed
+        const currentLngLat = marker.getLngLat();
+        if (currentLngLat.lng !== markerCoords[0] || currentLngLat.lat !== markerCoords[1]) {
+          marker.setLngLat(markerCoords);
+        }
+      }
+
+      newMarkers.set(markerId, marker);
+
+      // Add to map if not already on screen
+      if (!markersOnScreenRef.current.has(markerId)) {
+        marker.addTo(map);
+      }
+    }
+
+    // Remove markers that are no longer on screen
+    markersOnScreenRef.current.forEach((marker, id) => {
+      if (!newMarkers.has(id)) {
+        marker.remove();
+      }
+    });
+
+    markersOnScreenRef.current = newMarkers;
+  }, [createMarkerElement, photosById]);
+
   // Initialize map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
     console.log('[Map] Initializing MapLibre...');
 
-    // Get locale for map labels (supports language part only)
-    const mapLocale = i18n.language?.split('-')[0] || 'en';
-
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: 'https://tiles.openfreemap.org/styles/liberty',
+      style: '/boreal-map-tiles-style.json',
       center: [0, 30],
       zoom: 2,
       attributionControl: false,
+      localIdeographFontFamily: 'Metropolis, "Noto Sans", sans-serif',
     });
 
-    // Set ref immediately so other effects can use it
     mapRef.current = map;
 
     map.on('load', () => {
@@ -137,124 +363,101 @@ export function MapPage() {
       console.error('[Map] MapLibre error:', e);
     });
 
-    // Update zoom level only after move ends to prevent marker jitter/drifting
-    map.on('moveend', () => {
-      setZoomLevel(Math.floor(map.getZoom()));
-    });
-
     return () => {
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  // Compute clusters based on zoom level
-  const clusters = useMemo(() => {
-    return clusterPhotos(photos, zoomLevel);
-  }, [photos, zoomLevel]);
-
-  // Update markers when clusters change
+  // Add/update GeoJSON source with clustering when photos change
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || photos.length === 0) return;
 
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.remove());
-    markersRef.current = [];
+    const setupSource = () => {
+      // Create GeoJSON FeatureCollection from photos
+      const geojson: GeoJSON.FeatureCollection = {
+        type: 'FeatureCollection',
+        features: photos.map(photo => ({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [photo.longitude, photo.latitude]
+          },
+          properties: {
+            photoId: photo.id,
+            vaultId: photo.vault_id
+          }
+        }))
+      };
 
-    // Add new markers
-    for (const cluster of clusters) {
-      const firstPhoto = cluster.photos[0];
-      const thumbnailSrc = thumbnails[firstPhoto.id];
-      const count = cluster.photos.length;
+      // Check if source already exists
+      if (map.getSource(PHOTOS_SOURCE_ID)) {
+        // Update existing source
+        (map.getSource(PHOTOS_SOURCE_ID) as GeoJSONSource).setData(geojson);
+      } else {
+        // Add new clustered source
+        map.addSource(PHOTOS_SOURCE_ID, {
+          type: 'geojson',
+          data: geojson,
+          cluster: true,
+          clusterMaxZoom: 14, // Max zoom to cluster points
+          clusterRadius: 40, // Reduced radius for tighter, more accurate clusters
+          clusterProperties: {
+            // Store the first photo ID for thumbnail display
+            firstPhotoId: ['coalesce', ['get', 'photoId'], '']
+          }
+        });
 
-      // Create custom marker element
-      const el = document.createElement('div');
-      el.className = 'photo-marker';
-      el.style.cssText = `
-        width: 62px;
-        height: 66px;
-        border-radius: 4px;
-        cursor: pointer;
-        position: relative;
-      `;
-
-      // Thumbnail container
-      const thumbContainer = document.createElement('div');
-      thumbContainer.style.cssText = `
-        width: 58px;
-        height: 58px;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #1a1a1a;
-        border: 3px solid white;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        position: relative;
-      `;
-
-      if (thumbnailSrc) {
-        const img = document.createElement('img');
-        img.src = thumbnailSrc;
-        img.style.cssText = `
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        `;
-        thumbContainer.appendChild(img);
+        // Add an invisible layer to enable querySourceFeatures
+        // We use HTML markers for visual display, but need a layer for clustering to work
+        map.addLayer({
+          id: CLUSTER_LAYER_ID,
+          type: 'circle',
+          source: PHOTOS_SOURCE_ID,
+          paint: {
+            'circle-radius': 0,
+            'circle-opacity': 0
+          }
+        });
       }
 
-      // Count badge
-      if (count > 1) {
-        const badge = document.createElement('div');
-        badge.textContent = count.toString();
-        badge.style.cssText = `
-          position: absolute;
-          bottom: 0px;
-          left: 0px;
-          color: white;
-          font-size: 11px;
-          font-weight: 700;
-          padding: 2px 5px;
-          border-radius: 4px;
-          min-width: 16px;
-          text-align: center;
-          shadow: 0 0 2px rgba(0,0,0,0.7);
-        `;
-        thumbContainer.appendChild(badge);
-      }
+      // Initial marker update
+      updateMarkers();
 
-      el.appendChild(thumbContainer);
-
-      // Pin pointer
-      const pointer = document.createElement('div');
-      pointer.style.cssText = `
-        width: 0;
-        height: 0;
-        border-left: 6px solid transparent;
-        border-right: 6px solid transparent;
-        border-top: 8px solid white;
-        position: absolute;
-        bottom: 0;
-        left: 50%;
-        transform: translateX(-50%);
-      `;
-      el.appendChild(pointer);
-
-      const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
-        .setLngLat([cluster.longitude, cluster.latitude])
-        .addTo(map);
-
-      // Add click listener to open lightbox with cluster photos
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setLightboxPhotos(cluster.photos);
-        setLightboxIndex(0);
-        setLightboxOpen(true);
+      // Fit bounds to all photos
+      const bounds = new maplibregl.LngLatBounds();
+      photos.forEach(p => bounds.extend([p.longitude, p.latitude]));
+      map.fitBounds(bounds, {
+        padding: 50,
+        maxZoom: 3,
+        duration: 1000,
       });
+    };
 
-      markersRef.current.push(marker);
+    if (map.loaded()) {
+      setupSource();
+    } else {
+      map.on('load', setupSource);
     }
-  }, [clusters, thumbnails]);
+
+    // Update markers on map movement
+    const onRender = () => updateMarkers();
+    map.on('render', onRender);
+
+    return () => {
+      map.off('render', onRender);
+    };
+  }, [photos, updateMarkers]);
+
+  // Re-create markers when thumbnails update
+  useEffect(() => {
+    // Clear old markers and recreate with new thumbnails
+    markersRef.current.forEach(marker => marker.remove());
+    markersRef.current.clear();
+    markersOnScreenRef.current.clear();
+    updateMarkers();
+  }, [thumbnails, updateMarkers]);
 
   // Fly to user location
   const flyToUserLocation = useCallback(() => {
@@ -279,37 +482,10 @@ export function MapPage() {
         } else {
           setLocationError('Could not get location');
         }
-        // Clear error after 3 seconds
         setTimeout(() => setLocationError(null), 3000);
       }
     );
   }, []);
-
-  // Fit bounds to all photos
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || photos.length === 0) return;
-
-    // Wait for map to be ready
-    if (!map.loaded()) {
-      map.on('load', () => fitBounds());
-    } else {
-      fitBounds();
-    }
-
-    function fitBounds() {
-      if (photos.length === 0) return;
-
-      const bounds = new maplibregl.LngLatBounds();
-      photos.forEach(p => bounds.extend([p.longitude, p.latitude]));
-
-      map?.fitBounds(bounds, {
-        padding: 50,
-        maxZoom: 3,
-        duration: 1000,
-      });
-    }
-  }, [photos]);
 
   return (
     <motion.div
@@ -374,7 +550,6 @@ export function MapPage() {
         </div>
       )}
 
-
       {/* Empty state */}
       {!isLoading && photos.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
@@ -389,7 +564,7 @@ export function MapPage() {
 
       {/* Lightbox */}
       <GlobalPhotoSlider
-        photos={lightboxPhotos as any[]} // GeoPhoto fits PhotoMetadata roughly, ignoring strict type for now
+        photos={lightboxPhotos as any[]}
         thumbnails={thumbnails}
         visible={lightboxOpen}
         onClose={() => setLightboxOpen(false)}

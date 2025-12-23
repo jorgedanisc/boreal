@@ -21,7 +21,7 @@ pub struct ThumbnailCache {
 impl ThumbnailCache {
     /// Create a new thumbnail cache for a vault
     pub fn new(vault_dir: &PathBuf) -> Result<Self> {
-        let cache_dir = vault_dir.join("cache").join("thumbnails");
+        let cache_dir = vault_dir.join("cache");
         if !cache_dir.exists() {
             fs::create_dir_all(&cache_dir).context("Failed to create cache directory")?;
         }

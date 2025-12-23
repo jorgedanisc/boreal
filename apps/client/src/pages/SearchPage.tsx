@@ -4,11 +4,17 @@ import { AudioPlayer } from '@/components/gallery/AudioPlayer';
 import { getAllPhotos, getThumbnailForVault, PhotoWithVault } from '@/lib/vault';
 import { useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
+import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, SearchIcon, XIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { SearchIcon, XIcon, SparklesIcon, RefreshCwIcon, CheckCircleIcon } from 'lucide-react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { GlobalPhotoSlider, PhotoMetadata } from '@/components/gallery/PhotoLightbox';
 import 'react-photo-view/dist/react-photo-view.css';
+
+interface SemanticSearchResult {
+  id: string;
+  score: number;
+}
 
 export function SearchPage() {
   const navigate = useNavigate();
@@ -20,12 +26,54 @@ export function SearchPage() {
   const [lightboxIndex, setLightboxIndex] = useState(-1);
   const [audioPlayer, setAudioPlayer] = useState<{ id: string; filename: string } | null>(null);
 
+  // AI Search state (enabled by default)
+  const [aiReady, setAiReady] = useState(false);
+  const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]);
+  const [embeddingCount, setEmbeddingCount] = useState(0);
+  const [isEmbedding, setIsEmbedding] = useState(false);
+
   useEffect(() => {
     const osType = type();
     if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
       setIsDesktop(true);
     }
   }, []);
+
+  // Initialize AI models on mount (if available)
+  useEffect(() => {
+    initAISearch();
+  }, []);
+
+  const initAISearch = async () => {
+    try {
+      await invoke('init_embedding_models');
+      setAiReady(true);
+      // Get current embedding count
+      try {
+        const count = await invoke<number>('get_embedding_count');
+        setEmbeddingCount(count);
+      } catch {
+        // Command might not exist yet
+      }
+    } catch (e) {
+      // AI search not available (e.g., mobile or models not bundled)
+      console.log('AI search not available:', e);
+    }
+  };
+
+  const refreshEmbeddings = useCallback(async () => {
+    if (!aiReady || isEmbedding) return;
+    setIsEmbedding(true);
+    try {
+      const newCount = await invoke<number>('embed_all_photos');
+      setEmbeddingCount(prev => prev + newCount);
+      console.log(`[AI] Refreshed embeddings: ${newCount} new`);
+    } catch (e) {
+      console.error('Failed to refresh embeddings:', e);
+    } finally {
+      setIsEmbedding(false);
+    }
+  }, [aiReady, isEmbedding]);
 
   // Load all photos on mount
   useEffect(() => {
@@ -62,14 +110,67 @@ export function SearchPage() {
     }
   };
 
-  // Filter photos based on query
+  // Combined search: semantic + filename (debounced for semantic)
+  useEffect(() => {
+    if (!query.trim()) {
+      setSemanticResults([]);
+      return;
+    }
+
+    // Only do semantic search if AI is ready
+    if (!aiReady) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await invoke<SemanticSearchResult[]>('search_photos_semantic', {
+          query: query.trim(),
+          limit: 100
+        });
+        setSemanticResults(results);
+      } catch (e) {
+        console.error('Semantic search failed:', e);
+        setSemanticResults([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, aiReady]);
+
+  // Filter photos: combine semantic results + filename matches, deduplicated
   const filteredPhotos = useMemo(() => {
     if (!query.trim()) return allPhotos;
+
     const lowerQuery = query.toLowerCase().trim();
-    return allPhotos.filter(p =>
-      p.filename.toLowerCase().includes(lowerQuery)
+
+    // Filename matches
+    const filenameMatches = new Set(
+      allPhotos
+        .filter(p => p.filename.toLowerCase().includes(lowerQuery))
+        .map(p => p.id)
     );
-  }, [allPhotos, query]);
+
+    // Semantic matches (with scores)
+    const semanticScores = new Map(semanticResults.map(r => [r.id, r.score]));
+
+    // Combine: semantic results first (sorted by score), then filename matches
+    const semanticIds = new Set(semanticResults.map(r => r.id));
+
+    const results: PhotoWithVault[] = [];
+
+    // Add semantic results first, sorted by score
+    const semanticPhotos = allPhotos
+      .filter(p => semanticIds.has(p.id))
+      .sort((a, b) => (semanticScores.get(b.id) || 0) - (semanticScores.get(a.id) || 0));
+    results.push(...semanticPhotos);
+
+    // Add filename matches that aren't already in semantic results
+    const filenameOnlyPhotos = allPhotos.filter(
+      p => filenameMatches.has(p.id) && !semanticIds.has(p.id)
+    );
+    results.push(...filenameOnlyPhotos);
+
+    return results;
+  }, [allPhotos, query, semanticResults]);
 
   // Media items for masonry grid
   const mediaItems: MediaItem[] = useMemo(() => {
@@ -87,7 +188,6 @@ export function SearchPage() {
     });
   }, [filteredPhotos, thumbnails]);
 
-  // Slides for lightbox (exclude audio)
   // Slides for lightbox (exclude audio)
   const lightboxPhotos = useMemo(() => {
     return filteredPhotos
@@ -138,13 +238,13 @@ export function SearchPage() {
           className="fixed w-dvw top-0 left-0 right-0 pointer-events-none z-5"
           style={{
             background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0.55) 25%, rgba(0, 0, 0, 0.4) 45%, rgba(0, 0, 0, 0.25) 60%, rgba(0, 0, 0, 0.12) 75%, rgba(0, 0, 0, 0.04) 88%, transparent 100%)',
-            height: isDesktop ? 'calc(32px + 240px)' : 'calc(env(safe-area-inset-top) + 240px)',
+            height: isDesktop ? 'calc(32px + 200px)' : 'calc(env(safe-area-inset-top) + 200px)',
           }}
         />
         <div className="relative px-4 pt-4 pb-2 pl-safe pr-safe z-10">
           {/* Top Row: Search Input + Close Button */}
           <div className="flex items-center gap-3">
-            {/* Enhanced search input with motion */}
+            {/* Search input */}
             <motion.div
               className="flex-1 relative"
               whileFocus={{ scale: 1.02 }}
@@ -157,7 +257,7 @@ export function SearchPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search..."
+                placeholder={aiReady ? "Search by contents or filename..." : "Search by filename..."}
                 className="w-full h-10 pl-10 pr-10 rounded-full bg-secondary/60 backdrop-blur-md border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
                 whileFocus={{
                   scale: 1.01,
@@ -167,7 +267,7 @@ export function SearchPage() {
               />
               {query && (
                 <button
-                  onClick={clearSearch}
+                  onMouseDown={(e) => { e.preventDefault(); clearSearch(); }}
                   className="absolute inset-y-0 right-3 flex items-center"
                 >
                   <XIcon className="w-4 h-4 text-muted-foreground hover:text-foreground transition-colors" />
@@ -184,23 +284,38 @@ export function SearchPage() {
             </Button>
           </div>
 
-          {/* AI Detection - muted styling */}
-          <div className="flex items-center mt-3 px-1">
-            <span className="text-xs text-muted-foreground/60">AI Detection Off</span>
-          </div>
+          {/* Results Count + Refresh Button */}
+          <div className="flex items-center gap-4 mt-3 px-1">
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={filteredPhotos.length}
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 5 }}
+                className="text-sm font-medium text-muted-foreground"
+              >
+                {filteredPhotos.length} {filteredPhotos.length === 1 ? 'Result' : 'Results'}
+                {aiReady && <span className="text-xs ml-2 opacity-60">({embeddingCount} indexed)</span>}
+              </motion.p>
+              {aiReady && (
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={refreshEmbeddings}
+                  disabled={isEmbedding}
+                >
+                  {isEmbedding ? (
+                    <RefreshCwIcon className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCwIcon className="w-3.5 h-3.5" />
+                  )}
+                  {isEmbedding ? 'Indexing...' : 'Refresh Index'}
+                </Button>
+              )}
+            </AnimatePresence>
 
-          {/* Results Count */}
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={filteredPhotos.length}
-              initial={{ opacity: 0, y: -5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 5 }}
-              className="text-sm font-medium text-muted-foreground mt-2 px-1"
-            >
-              {filteredPhotos.length} {filteredPhotos.length === 1 ? 'Result' : 'Results'}
-            </motion.p>
-          </AnimatePresence>
+          </div>
         </div>
       </header>
 
@@ -216,7 +331,7 @@ export function SearchPage() {
             items={mediaItems}
             columns={4}
             spacing={5}
-            paddingTop={isDesktop ? 200 : "calc(200px + env(safe-area-inset-top))"}
+            paddingTop={isDesktop ? 180 : "calc(180px + env(safe-area-inset-top))"}
             paddingBottom="calc(40px + env(safe-area-inset-bottom))"
             onItemClick={handleItemClick}
           />

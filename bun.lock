@@ -18,6 +18,8 @@
       "dependencies": {
         "@base-ui/react": "^1.0.0",
         "@fontsource-variable/source-sans-3": "^5.2.9",
+        "@fontsource/metropolis": "^5.2.5",
+        "@fontsource/noto-sans": "^5.2.10",
         "@tabler/icons-react": "^3.35.0",
         "@tailwindcss/vite": "^4.1.17",
         "@tanstack/react-router": "^1.141.2",
@@ -270,6 +272,10 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.10", "", {}, "sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ=="],
 
     "@fontsource-variable/source-sans-3": ["@fontsource-variable/source-sans-3@5.2.9", "", {}, "sha512-K9fkQbb0BNnRmmaU+Gpr6U4IaYKpNzA8t07J6aam2i+6v84RT72MVpar8OBr3yYAEznj4riKivPQ2nAF2fPKsw=="],
+
+    "@fontsource/metropolis": ["@fontsource/metropolis@5.2.5", "", {}, "sha512-zAz6XS1ZXVXZadcqsOnToiePAKEiEywxOwILEaE4sRl+pVOFQI/30xMiKvjQae1NRK3TbeKxJAmt+yFkPguXJw=="],
+
+    "@fontsource/noto-sans": ["@fontsource/noto-sans@5.2.10", "", {}, "sha512-J58RVfS/C0Z2VBF+PoU260Tx8cdRGYuS+e3yQe4hYaIYDl0sEVn5CzlLo5zVRvQD0HaIUTV8AZMfqR7rtdEpqQ=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 

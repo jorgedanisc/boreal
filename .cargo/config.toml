@@ -1,8 +1,8 @@
-[build]
-# Ensure we're targeting Android, not the host
-target = "aarch64-linux-android"
+# Cargo workspace configuration
+# NOTE: Do NOT set a default target here as it affects all builds including desktop
+# Use explicit --target flag for specific platform builds instead
 
 [env]
-# Ensure CMAKE respects Android target
+# Optimize release builds
 CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1"
 CARGO_PROFILE_RELEASE_LTO = "thin"

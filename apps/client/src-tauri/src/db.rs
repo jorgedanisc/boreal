@@ -72,8 +72,21 @@ pub fn init_db(path: &Path) -> Result<Connection> {
         [],
     )?;
 
+    // Migration: Embeddings table for semantic search
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS embeddings (
+            photo_id TEXT PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            model_version TEXT NOT NULL DEFAULT 'nomic-embed-vision-v1.5',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
     Ok(conn)
 }
+
 
 pub fn set_metadata(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(

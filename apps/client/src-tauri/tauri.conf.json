@@ -37,6 +37,11 @@
     "externalBin": [
       "binaries/ffmpeg",
       "binaries/ffprobe"
+    ],
+    "resources": [
+      "models/nomic-embed-vision-v1.5/model.onnx",
+      "models/nomic-embed-text-v1.5/model.onnx",
+      "models/nomic-embed-text-v1.5/tokenizer.json"
     ]
   },
   "plugins": {

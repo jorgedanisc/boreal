@@ -301,10 +301,21 @@ export async function syncManifestUpload(): Promise<void> {
 /**
  * Download and merge the manifest from S3 into local DB.
  * This is called automatically on vault load, but can be triggered manually.
+ * After sync, triggers background embedding of cached photos.
  */
 export async function syncManifestDownload(): Promise<void> {
   try {
     await invoke('sync_manifest_download');
+
+    // After syncing manifest, embed any cached photos that haven't been embedded yet
+    invoke('embed_all_photos').then((count) => {
+      if (typeof count === 'number' && count > 0) {
+        console.log(`[AI] Embedded ${count} new photos after manifest sync`);
+      }
+    }).catch((e) => {
+      // AI embedding is optional, don't fail the sync
+      console.debug('Background embedding skipped:', e);
+    });
   } catch (e) {
     console.error('Manifest download failed:', e);
     // Non-critical, don't throw
