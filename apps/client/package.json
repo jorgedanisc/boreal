@@ -11,7 +11,7 @@
     "ios:dev": "bun tauri ios dev 'iPhone 17' --open",
     "android:dev": "./scripts/android-env.sh bun tauri android dev",
     "android:build": "./scripts/android-env.sh bun tauri android build --target aarch64",
-    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs --version 7.1.2 --targets x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-unknown-linux-gnu,aarch64-pc-windows-msvc",
+    "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs --version latest --targets x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,aarch64-apple-darwin,x86_64-apple-darwin,aarch64-unknown-linux-gnu,aarch64-pc-windows-msvc",
     "fetch:models": "node scripts/fetch-models.mjs",
     "tauri:build": "npm run fetch:ffmpeg && npm run fetch:models && tauri build",
     "tauri": "tauri"
