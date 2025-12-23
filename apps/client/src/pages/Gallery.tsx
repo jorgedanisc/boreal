@@ -10,11 +10,8 @@ import { useGalleryLayout } from '@/routes/gallery';
 // Custom Gallery Components
 import { AudioPlayer } from '@/components/gallery/AudioPlayer';
 import { VirtualizedMasonryGrid, MediaItem, LayoutItem } from '@/components/gallery/MasonryGrid';
-
-// Lightbox
-import Lightbox from "yet-another-react-lightbox";
-import Zoom from "yet-another-react-lightbox/plugins/zoom";
-import "yet-another-react-lightbox/styles.css";
+import { GlobalPhotoSlider, PhotoMetadata } from '@/components/gallery/PhotoLightbox';
+import 'react-photo-view/dist/react-photo-view.css';
 import { type } from '@tauri-apps/plugin-os';
 
 export default function Gallery() {
@@ -188,14 +185,21 @@ export default function Gallery() {
   }, []);
 
   // Slides for lightbox
-  const slides = useMemo(() => {
+  const lightboxPhotos = useMemo(() => {
     return photos
       .filter(p => (p.media_type || 'image') !== 'audio')
       .map(p => ({
-        src: thumbnails[p.id] || '',
-        alt: p.filename,
+        id: p.id,
+        filename: p.filename,
+        captured_at: p.captured_at,
+        created_at: p.created_at,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        width: p.width,
+        height: p.height,
+        vault_id: activeVault?.id
       }));
-  }, [photos, thumbnails]);
+  }, [photos, activeVault]);
 
   const handleItemClick = (index: number) => {
     const photo = photos[index];
@@ -236,13 +240,18 @@ export default function Gallery() {
         )}
       </main>
 
-
-      <Lightbox
-        open={lightboxIndex >= 0}
-        index={lightboxIndex}
-        close={() => setLightboxIndex(-1)}
-        slides={slides}
-        plugins={[Zoom]}
+      {/* PhotoSlider for lightbox */}
+      {/* PhotoSlider for lightbox */}
+      <GlobalPhotoSlider
+        photos={lightboxPhotos as unknown as PhotoMetadata[]}
+        thumbnails={thumbnails}
+        visible={lightboxIndex >= 0}
+        onClose={() => setLightboxIndex(-1)}
+        index={lightboxIndex >= 0 ? lightboxIndex : 0}
+        onIndexChange={setLightboxIndex}
+        onPhotoUpdate={(id, updates) => {
+          setPhotos(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+        }}
       />
 
       <AudioPlayer

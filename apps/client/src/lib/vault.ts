@@ -156,6 +156,55 @@ export async function getPhotos(): Promise<Photo[]> {
   }
 }
 
+// ============ Cross-Vault Types & Functions (for Search/Map) ============
+
+export interface PhotoWithVault extends Photo {
+  vault_id: string;
+}
+
+export interface GeoPhoto {
+  id: string;
+  vault_id: string;
+  latitude: number;
+  longitude: number;
+  captured_at?: string;
+}
+
+/**
+ * Get all photos from all vaults (for cross-vault search)
+ */
+export async function getAllPhotos(): Promise<PhotoWithVault[]> {
+  try {
+    return await invoke('get_all_photos');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Get all photos with geolocation data from all vaults (for map display)
+ */
+export async function getAllPhotosWithGeolocation(): Promise<GeoPhoto[]> {
+  try {
+    return await invoke('get_all_photos_with_geolocation');
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Get thumbnail for a photo from a specific vault
+ * @param id Photo ID
+ * @param vaultId Vault ID containing the photo
+ */
+export async function getThumbnailForVault(id: string, vaultId: string): Promise<string> {
+  try {
+    return await invoke('get_thumbnail_for_vault', { id, vaultId });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
 export async function getThumbnail(id: string): Promise<string> {
   try {
     return await invoke('get_thumbnail', { id });

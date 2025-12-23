@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Music } from 'lucide-react';
+import { AudioLinesIcon, Music } from 'lucide-react';
 import { useEffect, useState, memo } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -65,7 +65,7 @@ export const MediaThumbnail = memo(function MediaThumbnail({
       >
         <div className="text-center p-2">
           <div className="w-10 h-10 bg-primary/20 flex items-center justify-center mx-auto rounded-full">
-            <Music className="w-5 h-5 text-primary" />
+            <AudioLinesIcon className="w-5 h-5 text-primary" />
           </div>
           {showFilename && filename && (
             <span className="text-[10px] font-medium text-muted-foreground truncate max-w-[80px] block mt-1">

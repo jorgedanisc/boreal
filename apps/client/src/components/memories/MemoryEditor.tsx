@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useState, useEffect, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getPhotos, Photo, getThumbnail, queueManifestSync } from '@/lib/vault';
-import { Check, X, Calendar as CalendarIcon, Loader2, Search, Music, PaperclipIcon } from 'lucide-react';
+import { Check, X, Calendar as CalendarIcon, Loader2, Search, Music, PaperclipIcon, AudioLinesIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -263,7 +263,7 @@ function MediaPreview({ id, photos, thumbnailCache }: { id: string; photos: Phot
   if (mediaType === 'audio') {
     return (
       <div className="w-full h-full bg-muted/30 flex items-center justify-center">
-        <Music className="w-6 h-6 text-primary" />
+        <AudioLinesIcon className="w-6 h-6 text-primary" />
       </div>
     );
   }
@@ -303,7 +303,7 @@ const CachedMediaItem = memo(function CachedMediaItem({
       >
         <div className="text-center p-2">
           <div className="w-10 h-10 bg-primary/10 flex items-center justify-center mx-auto mb-1 rounded-full">
-            <Music className="w-5 h-5 text-primary" />
+            <AudioLinesIcon className="w-5 h-5 text-primary" />
           </div>
           <span className="text-[10px] font-medium text-muted-foreground truncate max-w-[80px] block">
             {photo.filename}

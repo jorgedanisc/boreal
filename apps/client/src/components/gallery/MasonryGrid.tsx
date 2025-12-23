@@ -1,6 +1,6 @@
-import { useState, useRef, useMemo, useCallback, memo, useEffect } from 'react';
 import { useGesture } from '@use-gesture/react';
-import { Music } from 'lucide-react';
+import { AudioLinesIcon } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useResizeObserver } from 'usehooks-ts';
 
 export interface MediaItem {
@@ -328,7 +328,7 @@ const GridItem = memo(function GridItem({
       >
         <div className="text-center p-4">
           <div className="w-12 h-12 bg-primary/10 flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
-            <Music className="w-6 h-6 text-primary" />
+            <AudioLinesIcon className="w-6 h-6 text-primary" />
           </div>
           <span className="text-xs font-medium text-muted-foreground truncate max-w-[100px] block">
             {item.alt}

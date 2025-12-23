@@ -113,7 +113,7 @@ function GalleryLayout() {
                   </Button>
                   <button
                     onClick={() => activeVault && setRenameOpen(true)}
-                    className="text-xl font-bold tracking-tight px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors text-left"
+                    className="text-xl font-semibold tracking-tight px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors text-left"
                   >
                     {activeVault?.name || "Photos"}
                   </button>

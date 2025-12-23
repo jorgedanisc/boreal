@@ -9,7 +9,7 @@ import { IconChevronRight, IconDownload, IconLoader, IconPlus, IconWifi } from "
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 // import { getDailyQuote } from "@/lib/quotes";
-import { ArrowRightIcon, ScanQrCodeIcon } from "lucide-react";
+import { ArrowRightIcon, MapPinIcon, ScanQrCodeIcon, SearchIcon } from "lucide-react";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
@@ -79,6 +79,37 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Search & Map Buttons - Above vaults */}
+            {vaults.length > 0 && (
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate({ to: "/search" })}
+                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-4 py-3 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <SearchIcon className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <span className="font-medium text-sm text-foreground/80 group-hover:text-foreground transition-colors">
+                      Search
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate({ to: "/map" })}
+                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-4 py-3 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <MapPinIcon className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                    <span className="font-medium text-sm text-foreground/80 group-hover:text-foreground transition-colors">
+                      Map
+                    </span>
+                  </div>
+                </button>
+              </div>
+            )}
+
             {/* Vaults Grid */}
             {vaults.length > 0 && (
               <div className="space-y-3">

@@ -766,6 +766,240 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
     Ok(result)
 }
 
+// ============ Cross-Vault Photo Access Commands ============
+
+/// Photo with vault context for cross-vault search
+#[derive(serde::Serialize)]
+struct PhotoWithVault {
+    id: String,
+    vault_id: String,
+    filename: String,
+    created_at: String,
+    captured_at: Option<String>,
+    tier: String,
+    media_type: String,
+    width: u32,
+    height: u32,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+}
+
+/// Geolocated photo for map display
+#[derive(serde::Serialize)]
+struct GeoPhoto {
+    id: String,
+    vault_id: String,
+    latitude: f64,
+    longitude: f64,
+    captured_at: Option<String>,
+}
+
+/// Get all photos from all vaults (for cross-vault search)
+#[tauri::command]
+async fn get_all_photos(app: AppHandle) -> Result<Vec<PhotoWithVault>, String> {
+    let vault_ids = store::get_vault_ids(&app)?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut all_photos = Vec::new();
+
+    for (vault_id, _bucket) in vault_ids {
+        let vault_dir = app_dir.join("vaults").join(&vault_id);
+        let db_path = vault_dir.join("manifest.db");
+
+        if !db_path.exists() {
+            continue;
+        }
+
+        let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
+            .map_err(|e| e.to_string())?;
+
+        let photos = stmt
+            .query_map([], |row| {
+                Ok(PhotoWithVault {
+                    id: row.get(0)?,
+                    vault_id: vault_id.clone(),
+                    filename: row.get(1)?,
+                    created_at: row.get(2)?,
+                    captured_at: row.get(3)?,
+                    tier: row.get(4)?,
+                    media_type: row
+                        .get::<_, Option<String>>(5)?
+                        .unwrap_or_else(|| "image".to_string()),
+                    width: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                    height: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+                    latitude: row.get(8)?,
+                    longitude: row.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        for photo in photos {
+            if let Ok(p) = photo {
+                all_photos.push(p);
+            }
+        }
+    }
+
+    // Sort all photos by date descending
+    all_photos.sort_by(|a, b| {
+        let date_a = a.captured_at.as_ref().unwrap_or(&a.created_at);
+        let date_b = b.captured_at.as_ref().unwrap_or(&b.created_at);
+        date_b.cmp(date_a)
+    });
+
+    Ok(all_photos)
+}
+
+/// Get all photos with geolocation data (for map display)
+#[tauri::command]
+async fn get_all_photos_with_geolocation(app: AppHandle) -> Result<Vec<GeoPhoto>, String> {
+    let vault_ids = store::get_vault_ids(&app)?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut geo_photos = Vec::new();
+
+    for (vault_id, _bucket) in vault_ids {
+        let vault_dir = app_dir.join("vaults").join(&vault_id);
+        let db_path = vault_dir.join("manifest.db");
+
+        if !db_path.exists() {
+            continue;
+        }
+
+        let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, latitude, longitude, captured_at FROM photos WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+
+        let photos = stmt
+            .query_map([], |row| {
+                Ok(GeoPhoto {
+                    id: row.get(0)?,
+                    vault_id: vault_id.clone(),
+                    latitude: row.get(1)?,
+                    longitude: row.get(2)?,
+                    captured_at: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        for photo in photos {
+            if let Ok(p) = photo {
+                geo_photos.push(p);
+            }
+        }
+    }
+
+    Ok(geo_photos)
+}
+
+/// Get thumbnail for a photo from a specific vault
+#[tauri::command]
+async fn get_thumbnail_for_vault(
+    app: AppHandle,
+    id: String,
+    vault_id: String,
+) -> Result<String, String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_dir = app_dir.join("vaults").join(&vault_id);
+    let cache_dir = vault_dir.join("cache");
+
+    // 1. Try to load from local cache first (fast path)
+    let cache_path = cache_dir.join(format!("{}.webp", id));
+    if cache_path.exists() {
+        let bytes = std::fs::read(&cache_path).map_err(|e| e.to_string())?;
+        return Ok(BASE64.encode(&bytes));
+    }
+
+    // 2. If not in cache, try to download from S3
+    // Load the vault config to get credentials
+    let config = match store::load_vault(&app, &vault_id) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            // Config not found - vault might not be fully set up
+            return Err(format!("Vault config not found: {}", e));
+        }
+    };
+    
+    let storage = Storage::new(&config).await;
+
+    let vault_key = BASE64
+        .decode(&config.vault_key)
+        .map_err(|e| format!("Invalid vault key: {}", e))?;
+    let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
+
+    let thumbnail_key = format!("thumbnails/{}.webp", id);
+    let enc_bytes = storage
+        .download_file(&thumbnail_key)
+        .await
+        .map_err(|e| format!("Failed to download file: {}", e))?;
+
+    let dec_bytes = crypto::decrypt(&enc_bytes, &key_arr).map_err(|e| e.to_string())?;
+
+    // Cache for next time
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).ok();
+    }
+    std::fs::write(&cache_path, &dec_bytes).ok();
+
+    Ok(BASE64.encode(&dec_bytes))
+}
+
+#[tauri::command]
+async fn update_photo_metadata(
+    app: AppHandle,
+    vault_id: String,
+    id: String,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    captured_at: Option<String>,
+) -> Result<(), String> {
+    // Open the DB for the specific vault
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = app_dir.join("vaults").join(&vault_id).join("manifest.db");
+    
+    if !db_path.exists() {
+        return Err(format!("Vault DB not found at {:?}", db_path));
+    }
+
+    let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+
+    // Build dynamic UPDATE query based on provided fields
+    let mut updates = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(lat) = latitude {
+        updates.push("latitude = ?");
+        params.push(Box::new(lat));
+    }
+    if let Some(lng) = longitude {
+        updates.push("longitude = ?");
+        params.push(Box::new(lng));
+    }
+    if let Some(ref date) = captured_at {
+        updates.push("captured_at = ?");
+        params.push(Box::new(date.clone()));
+    }
+
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    let query = format!(
+        "UPDATE photos SET {} WHERE id = ?",
+        updates.join(", ")
+    );
+    params.push(Box::new(id));
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    conn.execute(&query, params_refs.as_slice())
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_thumbnail(
     state: State<'_, AppState>,
@@ -1771,7 +2005,12 @@ pub fn run() {
             submit_import_frame,
             get_import_progress,
             complete_qr_import,
-            cancel_qr_import
+            cancel_qr_import,
+            // Cross-vault commands (for Search/Map)
+            get_all_photos,
+            get_all_photos_with_geolocation,
+            get_thumbnail_for_vault,
+            update_photo_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

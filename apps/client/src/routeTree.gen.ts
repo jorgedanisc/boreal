@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as VaultsRouteImport } from './routes/vaults'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as SearchRouteImport } from './routes/search'
 import { Route as ScanRouteImport } from './routes/scan'
 import { Route as PairingRouteImport } from './routes/pairing'
+import { Route as MapRouteImport } from './routes/map'
 import { Route as ImportRouteImport } from './routes/import'
 import { Route as GalleryRouteImport } from './routes/gallery'
 import { Route as IndexRouteImport } from './routes/index'
@@ -31,6 +33,11 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScanRoute = ScanRouteImport.update({
   id: '/scan',
   path: '/scan',
@@ -39,6 +46,11 @@ const ScanRoute = ScanRouteImport.update({
 const PairingRoute = PairingRouteImport.update({
   id: '/pairing',
   path: '/pairing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MapRoute = MapRouteImport.update({
+  id: '/map',
+  path: '/map',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ImportRoute = ImportRouteImport.update({
@@ -81,8 +93,10 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/gallery': typeof GalleryRouteWithChildren
   '/import': typeof ImportRoute
+  '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
   '/scan': typeof ScanRoute
+  '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
   '/qr-export/$vaultId': typeof QrExportVaultIdRoute
@@ -93,8 +107,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/import': typeof ImportRoute
+  '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
   '/scan': typeof ScanRoute
+  '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
   '/qr-export/$vaultId': typeof QrExportVaultIdRoute
@@ -107,8 +123,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/gallery': typeof GalleryRouteWithChildren
   '/import': typeof ImportRoute
+  '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
   '/scan': typeof ScanRoute
+  '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
   '/vaults': typeof VaultsRoute
   '/qr-export/$vaultId': typeof QrExportVaultIdRoute
@@ -122,8 +140,10 @@ export interface FileRouteTypes {
     | '/'
     | '/gallery'
     | '/import'
+    | '/map'
     | '/pairing'
     | '/scan'
+    | '/search'
     | '/setup'
     | '/vaults'
     | '/qr-export/$vaultId'
@@ -134,8 +154,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/import'
+    | '/map'
     | '/pairing'
     | '/scan'
+    | '/search'
     | '/setup'
     | '/vaults'
     | '/qr-export/$vaultId'
@@ -147,8 +169,10 @@ export interface FileRouteTypes {
     | '/'
     | '/gallery'
     | '/import'
+    | '/map'
     | '/pairing'
     | '/scan'
+    | '/search'
     | '/setup'
     | '/vaults'
     | '/qr-export/$vaultId'
@@ -161,8 +185,10 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GalleryRoute: typeof GalleryRouteWithChildren
   ImportRoute: typeof ImportRoute
+  MapRoute: typeof MapRoute
   PairingRoute: typeof PairingRoute
   ScanRoute: typeof ScanRoute
+  SearchRoute: typeof SearchRoute
   SetupRoute: typeof SetupRoute
   VaultsRoute: typeof VaultsRoute
   QrExportVaultIdRoute: typeof QrExportVaultIdRoute
@@ -184,6 +210,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/scan': {
       id: '/scan'
       path: '/scan'
@@ -196,6 +229,13 @@ declare module '@tanstack/react-router' {
       path: '/pairing'
       fullPath: '/pairing'
       preLoaderRoute: typeof PairingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/map': {
+      id: '/map'
+      path: '/map'
+      fullPath: '/map'
+      preLoaderRoute: typeof MapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/import': {
@@ -269,8 +309,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GalleryRoute: GalleryRouteWithChildren,
   ImportRoute: ImportRoute,
+  MapRoute: MapRoute,
   PairingRoute: PairingRoute,
   ScanRoute: ScanRoute,
+  SearchRoute: SearchRoute,
   SetupRoute: SetupRoute,
   VaultsRoute: VaultsRoute,
   QrExportVaultIdRoute: QrExportVaultIdRoute,
