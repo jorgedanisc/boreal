@@ -37,6 +37,10 @@ pub fn init_db(path: &Path) -> Result<Connection> {
     conn.execute("ALTER TABLE photos ADD COLUMN longitude REAL", [])
         .ok();
 
+    // Migration: Add thumbnail size for more accurate vault size tracking
+    conn.execute("ALTER TABLE photos ADD COLUMN thumbnail_size_bytes INTEGER", [])
+        .ok();
+
     // Migration: Create metadata table for syncing vault properties (visits, name, etc.)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS metadata (

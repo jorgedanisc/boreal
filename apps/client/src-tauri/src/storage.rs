@@ -31,7 +31,6 @@ pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 #[derive(Clone)]
 pub struct Storage {
     client: Client,
-    cw_client: aws_sdk_cloudwatch::Client,
     bucket: String,
 }
 
@@ -82,74 +81,12 @@ impl Storage {
 
         let client = Client::from_conf(s3_config);
 
-        // Build CloudWatch config
-        let http_client_cw = aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new()
-            .build(https_connector);
-
-        let cw_config = aws_sdk_cloudwatch::config::Builder::new()
-            .region(region)
-            .credentials_provider(credentials)
-            .behavior_version(BehaviorVersion::latest())
-            .http_client(http_client_cw)
-            .stalled_stream_protection(
-                aws_sdk_cloudwatch::config::StalledStreamProtectionConfig::disabled(),
-            )
-            .identity_cache(aws_sdk_cloudwatch::config::IdentityCache::no_cache())
-            .build();
-        
-        let cw_client = aws_sdk_cloudwatch::Client::from_conf(cw_config);
-
         Self {
             client,
-            cw_client,
             bucket: config.bucket.clone(),
         }
     }
 
-    /// Fetch total bucket size in bytes from CloudWatch (Standard Storage)
-    pub async fn get_bucket_size(&self) -> Result<u64, String> {
-        let end_time = std::time::SystemTime::now();
-        let start_time = end_time
-            .checked_sub(std::time::Duration::from_secs(86400 * 2)) // Look back 48 hours to be safe
-            .unwrap_or(end_time);
-
-        let result = self
-            .cw_client
-            .get_metric_statistics()
-            .namespace("AWS/S3")
-            .metric_name("BucketSizeBytes")
-            .dimensions(
-                aws_sdk_cloudwatch::types::Dimension::builder()
-                    .name("BucketName")
-                    .value(&self.bucket)
-                    .build(),
-            )
-            .dimensions(
-                aws_sdk_cloudwatch::types::Dimension::builder()
-                    .name("StorageType")
-                    .value("StandardStorage")
-                    .build(),
-            )
-            .start_time(aws_smithy_types::DateTime::from(start_time))
-            .end_time(aws_smithy_types::DateTime::from(end_time))
-            .period(86400)
-            .statistics(aws_sdk_cloudwatch::types::Statistic::Average)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch metrics: {}", e))?;
-
-        // Get the latest datapoint
-        if let Some(datapoints) = result.datapoints {
-            if let Some(latest) = datapoints
-                .iter()
-                .max_by_key(|d| d.timestamp.as_ref().map(|t| t.secs()).unwrap_or(0))
-            {
-                return Ok(latest.average.unwrap_or(0.0) as u64);
-            }
-        }
-
-        Ok(0) // No data yet or error
-    }
 
     pub async fn upload_file(&self, key: &str, body: Vec<u8>) -> Result<()> {
         self.client

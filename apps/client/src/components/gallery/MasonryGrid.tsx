@@ -165,13 +165,27 @@ export function VirtualizedMasonryGrid({
     }
   }, [layout, onLayoutComputed]);
 
+  /* 
+   * Virtualization state
+   * We need to track scrollTop in state to trigger re-renders as the user scrolls.
+   * Without this, the component only re-renders on prop changes/resize, but not on scroll,
+   * causing items to remain "invisible" (null) as you scroll down.
+   */
+  const [scrollTop, setScrollTop] = useState(0);
+
   // Notify parent of scroll position changes for timeline sync
   useEffect(() => {
     const scrollElement = scrollRef.current;
-    if (!scrollElement || !onScrollPositionChange) return;
+    if (!scrollElement) return;
 
     const handleScroll = () => {
-      onScrollPositionChange(scrollElement.scrollTop, totalHeight);
+      // Update local state for virtualization
+      setScrollTop(scrollElement.scrollTop);
+
+      // Notify parent if needed
+      if (onScrollPositionChange) {
+        onScrollPositionChange(scrollElement.scrollTop, totalHeight);
+      }
     };
 
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
@@ -277,7 +291,7 @@ export function VirtualizedMasonryGrid({
         {layout.map(({ item, x, y, width, height, globalIndex }) => {
           // Only render if item is in visible range (simple virtualization)
           // Using a larger buffer for smooth scrolling
-          const scrollTop = scrollRef.current?.scrollTop ?? 0;
+          // note: we use 'scrollTop' state here instead of ref.current.scrollTop to ensure reactivity
           const viewportHeight = scrollRef.current?.clientHeight ?? 800;
           const buffer = viewportHeight * 2;
           const isVisible = y + height >= scrollTop - buffer && y <= scrollTop + viewportHeight + buffer;

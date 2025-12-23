@@ -251,26 +251,25 @@ export function MultipleFileUploader() {
   } = useUploadStore();
 
   const filesToRender = [...files].sort((a, b) => b.size - a.size); // Sort by size descending
-  const parentRef = useRef<HTMLDivElement>(null);
+  const [parentRef, setParentRef] = useState<HTMLDivElement | null>(null);
 
   const rowVirtualizer = useVirtualizer({
     count: filesToRender.length,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => parentRef,
     estimateSize: () => 72, // Approximate height of each row item
-    overscan: 5,
+    overscan: 20,
   });
 
   // Force measure update when drawer opens or files change to fix blank list issue
-  // Using useLayoutEffect + setTimeout to ensure DOM is ready after drawer animation
-  useLayoutEffect(() => {
-    if (!isMinimized && parentRef.current) {
+  useEffect(() => {
+    if (!isMinimized && parentRef) {
       // Small delay to wait for drawer animation to complete and DOM to be ready
       const timeoutId = setTimeout(() => {
         rowVirtualizer.measure();
       }, 100);
       return () => clearTimeout(timeoutId);
     }
-  }, [isMinimized, filesToRender.length, rowVirtualizer]);
+  }, [isMinimized, filesToRender.length, rowVirtualizer, parentRef]);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -631,7 +630,7 @@ export function MultipleFileUploader() {
                   {/* Virtualized List Container with Scroll Mask */}
                   <div
                     key={isOpen ? 'open' : 'closed'}
-                    ref={parentRef}
+                    ref={setParentRef}
                     className="h-full w-full overflow-y-auto relative mask-linear-fade py-4"
                     style={{
                       maskImage: 'linear-gradient(to bottom, transparent, black 16px, black calc(100% - 16px), transparent)',

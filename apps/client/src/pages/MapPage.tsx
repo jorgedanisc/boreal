@@ -181,7 +181,7 @@ export function MapPage() {
     // If we are completely zoomed out, don't show any markers
     // This avoids confusing "aggregate" locations that look wrong
     if (zoom < 2) {
-      markersOnScreenRef.current.forEach((marker, id) => {
+      markersOnScreenRef.current.forEach((marker) => {
         marker.remove();
       });
       markersOnScreenRef.current.clear();

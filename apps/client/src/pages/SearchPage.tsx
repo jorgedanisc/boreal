@@ -317,7 +317,7 @@ export function SearchPage() {
           </div>
 
           {/* Results Count + Refresh Button */}
-          <div className="flex items-center gap-4 mt-3 px-1">
+          <div className="flex items-center gap-4 mt-3 ml-4 px-1">
             <AnimatePresence mode="wait">
               <motion.p
                 key={filteredPhotos.length}
@@ -329,23 +329,21 @@ export function SearchPage() {
                 {filteredPhotos.length} {filteredPhotos.length === 1 ? 'Result' : 'Results'}
                 {aiReady && <span className="text-xs ml-2 opacity-60">({embeddingCount} indexed)</span>}
               </motion.p>
-              {aiReady && (
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={refreshEmbeddings}
-                  disabled={isEmbedding}
-                >
-                  {isEmbedding ? (
-                    <RefreshCwIcon className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCwIcon className="w-3.5 h-3.5" />
-                  )}
-                  {isEmbedding ? 'Indexing...' : 'Refresh Index'}
-                </Button>
-              )}
             </AnimatePresence>
+            {aiReady && (
+              <Button
+                variant="outline"
+                size="xs"
+                className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                onClick={refreshEmbeddings}
+                disabled={isEmbedding}
+              >
+                <div className={isEmbedding ? "animate-spin" : ""}>
+                  <RefreshCwIcon className="w-3.5 h-3.5" />
+                </div>
+                {isEmbedding ? 'Indexing...' : 'Refresh Index'}
+              </Button>
+            )}
 
           </div>
         </div>

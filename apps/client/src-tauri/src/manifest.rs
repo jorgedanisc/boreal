@@ -26,6 +26,7 @@ pub struct PhotoRecord {
     pub created_at: Option<String>,
     pub captured_at: Option<String>,
     pub size_bytes: Option<i64>,
+    pub thumbnail_size_bytes: Option<i64>,
     pub s3_key: String,
     pub thumbnail_key: Option<String>,
     pub tier: String,
@@ -120,7 +121,7 @@ pub fn export_manifest(conn: &Connection) -> Result<ManifestData> {
 fn export_photos(conn: &Connection) -> Result<Vec<PhotoRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, filename, width, height, created_at, captured_at, size_bytes, 
-                s3_key, thumbnail_key, tier, media_type, latitude, longitude 
+                s3_key, thumbnail_key, tier, media_type, latitude, longitude, thumbnail_size_bytes
          FROM photos",
     )?;
 
@@ -141,6 +142,7 @@ fn export_photos(conn: &Connection) -> Result<Vec<PhotoRecord>> {
                 .unwrap_or_else(|| "image".to_string()),
             latitude: row.get(11)?,
             longitude: row.get(12)?,
+            thumbnail_size_bytes: row.get(13)?,
         })
     })?;
 
@@ -262,8 +264,8 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
             conn.execute(
                 "INSERT INTO photos (id, filename, width, height, created_at, captured_at, 
                                     size_bytes, s3_key, thumbnail_key, tier, media_type, 
-                                    latitude, longitude)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                    latitude, longitude, thumbnail_size_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     photo.id,
                     photo.filename,
@@ -278,6 +280,7 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                     photo.media_type,
                     photo.latitude,
                     photo.longitude,
+                    photo.thumbnail_size_bytes,
                 ],
             )?;
             Ok(MergeResult::Added)
@@ -291,7 +294,8 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                     "UPDATE photos SET filename = ?2, width = ?3, height = ?4, 
                                        created_at = ?5, captured_at = ?6, size_bytes = ?7,
                                        s3_key = ?8, thumbnail_key = ?9, tier = ?10,
-                                       media_type = ?11, latitude = ?12, longitude = ?13
+                                       media_type = ?11, latitude = ?12, longitude = ?13,
+                                       thumbnail_size_bytes = ?14
                      WHERE id = ?1",
                     rusqlite::params![
                         photo.id,
@@ -307,6 +311,7 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                         photo.media_type,
                         photo.latitude,
                         photo.longitude,
+                        photo.thumbnail_size_bytes,
                     ],
                 )?;
                 Ok(MergeResult::Updated)

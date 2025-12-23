@@ -76,10 +76,14 @@ async fn get_vaults(app: AppHandle) -> Result<Vec<VaultPublic>, String> {
                 .map_err(|e| e.to_string())?
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let size: u64 = db::get_metadata(&conn, "total_size_bytes")
-                .map_err(|e| e.to_string())?
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
+            
+            // Calculate total size from DB (sum of all photos + thumbnails)
+            let size: u64 = conn.query_row(
+                "SELECT CAST(SUM(COALESCE(size_bytes, 0) + COALESCE(thumbnail_size_bytes, 0)) AS INTEGER) FROM photos",
+                [],
+                |row| row.get(0)
+            ).unwrap_or(0);
+
             (name, visits, size)
         } else {
             // New vault or migration needed - use defaults
@@ -186,18 +190,6 @@ async fn load_vault(
 
     tokio::spawn(async move {
         if let (Some(storage), Some(config)) = (storage_clone, config_clone) {
-            // 0. Update vault size stats (best effort)
-            if let Ok(size) = storage.get_bucket_size().await {
-                let db_guard = db_clone.lock().await;
-                if let Some(conn) = db_guard.as_ref() {
-                    if let Err(e) = db::set_metadata(conn, "total_size_bytes", &size.to_string()) {
-                        log::warn!("[Vault Stats] Failed to save size: {}", e);
-                    } else {
-                        log::info!("[Vault Stats] Updated size: {} bytes", size);
-                    }
-                }
-            }
-
             // 1. Pull latest from cloud
             match sync_manifest_download_internal(&storage, &db_clone, &config).await {
                 Ok(_) => {
@@ -746,6 +738,10 @@ async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), St
     let original_key = format!("originals/{}", id);
     let thumbnail_key = format!("thumbnails/{}.avif", id);
 
+    // Capture sizes before move
+    let original_size = enc_original.len();
+    let thumbnail_size = enc_thumbnail.len();
+
     storage
         .upload_file(&original_key, enc_original)
         .await
@@ -762,15 +758,16 @@ async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), St
         let conn = db_guard.as_ref().ok_or("DB not initialized")?;
 
         conn.execute(
-            "INSERT INTO photos (id, filename, width, height, created_at, size_bytes, s3_key, thumbnail_key, tier)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO photos (id, filename, width, height, created_at, size_bytes, thumbnail_size_bytes, s3_key, thumbnail_key, tier)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 id,
                 filename,
                 0, // TODO: Extract dims
                 0,
                 chrono::Utc::now().to_rfc3339(),
-                original_bytes.len(),
+                original_size, // Use Encrypted Size for accurate vault usage
+                thumbnail_size,
                 original_key,
                 thumbnail_key,
                 "Standard" // TODO: Configurable

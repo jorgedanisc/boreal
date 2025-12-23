@@ -149,7 +149,7 @@ The manifest is the source of truth. Devices sync by pulling the latest manifest
 │  │  - Thumbnail generation (image-rs)                  │    │
 │  │  - EXIF extraction                                  │    │
 │  │  - CLIP embeddings (ort / onnxruntime)              │    │
-│  │  - Whisper transcription (whisper-rs)               │    │
+│  │                   │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                           │                                 │
 │                           ▼                                 │
