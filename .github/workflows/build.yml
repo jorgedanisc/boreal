@@ -315,12 +315,14 @@ jobs:
       - name: Install FUSE for AppImage processing
         if: contains(inputs.platform, 'ubuntu')
         run: |
+          set -x
           sudo apt-get update
           sudo apt-get install -y fuse libfuse2
 
       - name: Remove libwayland-client.so from AppImage
         if: contains(inputs.platform, 'ubuntu')
         run: |
+          set -x
           # Find the AppImage file
           APPIMAGE_PATH=$(find apps/client/src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
 

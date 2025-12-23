@@ -227,6 +227,13 @@ async function main() {
   const args = parseArgs(process.argv);
 
   const targets = args.targets?.length ? args.targets : [getHostTargetTriple()];
+
+  // If universal target is requested, ensure we have the components
+  if (targets.includes("universal-apple-darwin")) {
+    if (!targets.includes("x86_64-apple-darwin")) targets.push("x86_64-apple-darwin");
+    if (!targets.includes("aarch64-apple-darwin")) targets.push("aarch64-apple-darwin");
+  }
+
   log(args, `Targets: ${targets.join(", ")}`);
 
   const release = await resolveRelease(args.repo, args.version);
@@ -235,6 +242,49 @@ async function main() {
   log(args, `Resolved release: ${args.repo}@${tag}`);
 
   for (const triple of targets) {
+    if (triple === "universal-apple-darwin") {
+      if (process.platform !== "darwin") {
+        log(args, "WARN: universal-apple-darwin build requires macOS to run `lipo`. Skipping universal binary creation.");
+        continue;
+      }
+
+      // We need both x86_64-apple-darwin and aarch64-apple-darwin
+      const subTargets = ["x86_64-apple-darwin", "aarch64-apple-darwin"];
+
+      // Ensure sub-targets are fetched/installed
+      for (const sub of subTargets) {
+        if (!targets.includes(sub)) {
+          // If not already in the list, we need to process it. 
+          // We can just recurse lightly or duplicate logic. 
+          // Simpler here: just run the install logic for this sub-target now.
+          // However, avoiding infinite recursion if we were to push to `targets`.
+          // Let's just assume the user typically requests all targets or we force fetch them.
+          // BETTER APPROACH: Add them to a "to-process" list if we can, but we are inside the looop.
+          // Let's just execute the fetch logic for them right here.
+
+          // Actually, since this script is usually called with a list of targets, we can just ensure
+          // we have the paths to the inputs.
+        }
+      }
+
+      // Construct paths for inputs
+      const exe = ""; // macOS has no extension
+      const inputX64 = path.join(args.out, `${args.binBaseName}-x86_64-apple-darwin${exe}`);
+      const inputArm64 = path.join(args.out, `${args.binBaseName}-aarch64-apple-darwin${exe}`);
+      const outputUniversal = path.join(args.out, `${args.binBaseName}-universal-apple-darwin${exe}`);
+
+      // Check if inputs exist. If not, we must fetch them. 
+      // Since we are iterating `targets`, we can't easily jump back.
+      // BUT, we can just rely on the fact that we'll process them if they are in the list.
+      // If `universal-apple-darwin` is passed, we should implicitly ensure x64/arm64 are also processed.
+      // Let's modify the `targets` array at the start of `main` instead.
+
+      // WAIT. I cannot modify the loop while iterating easily. 
+      // Let's just run `lipo` at the end or change how we iterate.
+      // Re-writing this block isn't enough. I need to change the target list preparation.
+      continue;
+    }
+
     const { osName, archName } = mapRustTripleToOsArch(triple);
 
     // Default FFmpegBin naming per README:
@@ -285,6 +335,32 @@ async function main() {
         const outFfprobe = path.join(args.out, `ffprobe-${triple}${exe}`);
         const r2 = await installBinary(ffprobePath, outFfprobe, args.force);
         log(args, `${r2.skipped ? "SKIP" : "OK  "} ${outFfprobe}`);
+      }
+    }
+  }
+
+  // Post-processing for universal binaries
+  if (targets.includes("universal-apple-darwin") && process.platform === "darwin") {
+    log(args, "Creating universal binaries...");
+    const exes = [args.binBaseName, args.withFfprobe ? "ffprobe" : null].filter(Boolean);
+
+    for (const rawName of exes) {
+      const inputX64 = path.join(args.out, `${rawName}-x86_64-apple-darwin`);
+      const inputArm64 = path.join(args.out, `${rawName}-aarch64-apple-darwin`);
+      const outputUniversal = path.join(args.out, `${rawName}-universal-apple-darwin`);
+
+      if (fs.existsSync(inputX64) && fs.existsSync(inputArm64)) {
+        try {
+          execSync(`lipo -create -output "${outputUniversal}" "${inputX64}" "${inputArm64}"`);
+          log(args, `OK   ${outputUniversal}`);
+        } catch (e) {
+          log(args, `ERROR creating universal binary for ${rawName}: ${e.message}`);
+          // Don't fail the whole script, maybe? Or should we?
+          // If we can't create it, the build will fail later anyway.
+          throw e;
+        }
+      } else {
+        log(args, `WARN: Missing inputs for universal binary ${rawName}. Needed: \n  ${inputX64}\n  ${inputArm64}`);
       }
     }
   }
