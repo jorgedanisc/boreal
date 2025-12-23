@@ -2,8 +2,6 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/source-sans-3";
-@import "@fontsource/metropolis";
-@import "@fontsource/noto-sans";
 
 @custom-variant dark (&:is(.dark *));
 
