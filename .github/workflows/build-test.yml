@@ -58,10 +58,14 @@ jobs:
           key: ${{ runner.os }}-cargo-benchmark-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-benchmark-
+      - name: Generate Fixtures
+        run: |
+          chmod +x .ci-fixtures/generate.sh
+          bash .ci-fixtures/generate.sh .ci-fixtures/out
       - name: Run Compression Benchmark
         working-directory: apps/client/src-tauri
         run: |
-          # Generate/Ensure fixtures exist (assuming they are checked in or generated)
+          # Fixtures generated in previous step at root/.ci-fixtures/out
           cargo run --bin benchmark -- ../../../.ci-fixtures/out
       - name: Upload Report
         uses: actions/upload-artifact@v4
@@ -73,7 +77,7 @@ jobs:
   build-test:
     permissions:
       contents: write
-    needs: fetch-assets
+    needs: [fetch-assets, benchmark]
     strategy:
       fail-fast: false
       matrix:
