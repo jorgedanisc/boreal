@@ -11,12 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Install Dependencies
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev
+      - name: Fetch Sidecars
+        working-directory: apps/client
+        run: |
+          bun install
+          bun run fetch:ffmpeg
       - name: Cache Cargo registry
         uses: actions/cache@v3
         with:
