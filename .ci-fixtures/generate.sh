@@ -18,7 +18,7 @@ ffmpeg -f lavfi -i testsrc=size=3840x2160:rate=1 -frames:v 1 -q:v 2 -y "$OUTPUT_
 # Gradient / Color (PNG)
 ffmpeg -f lavfi -i color=c=red:size=1920x1080:rate=1 -frames:v 1 -y "$OUTPUT_DIR/img_02_red_1080p.png"
 # Random noise
-ffmpeg -f lavfi -i nullsrc=s=1280x720,geq=random(1)*255:128:128 -frames:v 1 -y "$OUTPUT_DIR/img_03_noise.png"
+ffmpeg -f lavfi -i "nullsrc=s=1280x720,geq=random(1)*255:128:128" -frames:v 1 -y "$OUTPUT_DIR/img_03_noise.png"
 # Text overlay
 ffmpeg -f lavfi -i "color=000000:1080x720:d=1,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='Benchmark':fontsize=64:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 -y "$OUTPUT_DIR/img_04_text.jpg" 2>/dev/null || \
 ffmpeg -f lavfi -i "color=000000:1080x720:d=1" -frames:v 1 -y "$OUTPUT_DIR/img_04_black.jpg" 
