@@ -329,21 +329,36 @@ export function SearchPage() {
                 {filteredPhotos.length} {filteredPhotos.length === 1 ? 'Result' : 'Results'}
                 {aiReady && <span className="text-xs ml-2 opacity-60">({embeddingCount} indexed)</span>}
               </motion.p>
+              {aiReady && (
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground overflow-hidden"
+                  onClick={refreshEmbeddings}
+                  disabled={isEmbedding}
+                >
+                  <motion.div
+                    animate={{ rotate: isEmbedding ? 360 : 0 }}
+                    transition={isEmbedding ? { repeat: Infinity, duration: 1, ease: "linear" } : { duration: 0.3 }}
+                    className="shrink-0"
+                  >
+                    <RefreshCwIcon className="w-3.5 h-3.5" />
+                  </motion.div>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={isEmbedding ? 'indexing' : 'ready'}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.15 }}
+                      className="whitespace-nowrap"
+                    >
+                      {isEmbedding ? 'Indexing...' : 'Refresh Index'}
+                    </motion.span>
+                  </AnimatePresence>
+                </Button>
+              )}
             </AnimatePresence>
-            {aiReady && (
-              <Button
-                variant="outline"
-                size="xs"
-                className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                onClick={refreshEmbeddings}
-                disabled={isEmbedding}
-              >
-                <div className={isEmbedding ? "animate-spin" : ""}>
-                  <RefreshCwIcon className="w-3.5 h-3.5" />
-                </div>
-                {isEmbedding ? 'Indexing...' : 'Refresh Index'}
-              </Button>
-            )}
 
           </div>
         </div>

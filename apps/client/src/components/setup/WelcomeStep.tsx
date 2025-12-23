@@ -5,11 +5,11 @@ import Aurora from "@/components/ui/aurora";
 import { RenameVaultDialog } from "@/components/vault/RenameVaultDialog";
 import { VaultCard } from "@/components/vault/VaultCard";
 import { getVaults, loadVault, renameVault, type VaultPublic } from "@/lib/vault";
-import { IconChevronRight, IconDownload, IconLoader, IconPlus, IconWifi } from "@tabler/icons-react";
+import { IconChevronRight, IconDownload, IconLoader, IconMap, IconPlus, IconSearch, IconWifi } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 // import { getDailyQuote } from "@/lib/quotes";
-import { ArrowRightIcon, MapIcon, ScanQrCodeIcon, SearchIcon } from "lucide-react";
+import { ArrowRightIcon, ScanQrCodeIcon } from "lucide-react";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
@@ -102,7 +102,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() => navigate({ to: "/search" })}
                     >
-                      <SearchIcon className="size-4" />
+                      <IconSearch className="size-4" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -110,7 +110,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() => navigate({ to: "/map" })}
                     >
-                      <MapIcon className="size-4" />
+                      <IconMap className="size-4" />
                     </Button>
                     {/* Only show 'See all' arrow if we are clamping the list */}
                     {vaults.length > MAX_VISIBLE_VAULTS && (

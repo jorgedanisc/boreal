@@ -1,6 +1,7 @@
 import { GlobalPhotoSlider } from '@/components/gallery/PhotoLightbox';
 import { Button } from '@/components/ui/button';
 import { GeoPhoto, getAllPhotosWithGeolocation, getThumbnailForVault } from '@/lib/vault';
+import { IconLocation } from '@tabler/icons-react';
 import { useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
 import { ChevronLeft, NavigationIcon } from 'lucide-react';
@@ -526,7 +527,7 @@ export function MapPage() {
           onClick={flyToUserLocation}
           className="h-10 w-10 rounded-full shadow-lg"
         >
-          <NavigationIcon className="w-5 h-5 fill-white stroke-white" />
+          <IconLocation className="mt-0.5 mr-0.5 w-5 h-5 fill-white stroke-white" />
         </Button>
       </div>
 

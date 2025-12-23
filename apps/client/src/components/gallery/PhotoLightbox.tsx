@@ -1,13 +1,14 @@
-import { PhotoSlider, PhotoProvider, PhotoView } from 'react-photo-view';
-import 'react-photo-view/dist/react-photo-view.css';
-import { motion, AnimatePresence } from 'motion/react';
-import { InfoIcon, MapPinIcon, CalendarIcon, XIcon, ImageIcon, CheckIcon } from 'lucide-react';
-import { useState, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { IconInfoCircle, IconInfoCircleFilled, IconX } from '@tabler/icons-react';
 import { invoke } from '@tauri-apps/api/core';
 import { type } from '@tauri-apps/plugin-os';
+import { CalendarIcon, ImageIcon, MapPinIcon, XIcon } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { useEffect, useState } from 'react';
+import { PhotoProvider, PhotoSlider, PhotoView } from 'react-photo-view';
+import 'react-photo-view/dist/react-photo-view.css';
 
 export interface PhotoMetadata {
   id: string;
@@ -298,17 +299,19 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
             <div className="flex items-center justify-end gap-3 px-4 pt-4 pb-2 pointer-events-auto">
               <button
                 onClick={() => setShowInfo(!showInfo)}
-                className={`p-2.5 rounded-full backdrop-blur-md transition-colors ${showInfo ? 'bg-white/30 text-white' : 'bg-black/30 text-white/90 hover:bg-black/50'}`}
+                className={`p-2.5 rounded-full backdrop-blur-md`}
                 title="Information"
               >
-                <InfoIcon className="w-5 h-5" />
+                {
+                  !showInfo ? <IconInfoCircle className="w-5 h-5" /> : <IconInfoCircleFilled className="w-5 h-5" />
+                }
               </button>
               <button
                 onClick={onClose}
                 className="p-2.5 rounded-full backdrop-blur-md bg-black/30 text-white/90 hover:bg-black/50 transition-colors"
                 title="Close"
               >
-                <XIcon className="w-5 h-5" />
+                <IconX className="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -338,4 +341,5 @@ export function PhotoLightbox({ children }: any) {
   );
 }
 
-export { PhotoView, PhotoProvider };
+export { PhotoProvider, PhotoView };
+

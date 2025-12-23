@@ -43,6 +43,10 @@ on:
         required: false
         type: boolean
         default: false
+      use-asset-cache:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -203,7 +207,12 @@ jobs:
 
       - name: rustup install target
         if: ${{ inputs.target != '' }}
-        run: rustup target add ${{ inputs.target }}
+        run: |
+          if [ "${{ inputs.target }}" == "universal-apple-darwin" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ inputs.target }}
+          fi
 
       - name: import Apple Developer Certificate
         if: contains(inputs.platform, 'macos') && inputs.sign-binaries
@@ -249,11 +258,23 @@ jobs:
           fi
           echo "platform=${patched_platform}" >> $GITHUB_OUTPUT
 
+      - name: Restore assets cache
+        if: inputs.use-asset-cache
+        id: restore-assets-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            apps/client/src-tauri/binaries
+            apps/client/src-tauri/models
+          key: assets-${{ hashFiles('apps/client/scripts/**') }}
+
       - name: Fetch FFmpeg
+        if: steps.restore-assets-cache.outputs.cache-hit != 'true'
         working-directory: apps/client
         run: bun run fetch:ffmpeg
 
       - name: Fetch Models
+        if: steps.restore-assets-cache.outputs.cache-hit != 'true'
         working-directory: apps/client
         run: bun run fetch:models
       - name: Build with Tauri

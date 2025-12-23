@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
 import {
   cancelQrExport,
@@ -12,6 +13,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import QrScanner from "qr-scanner";
 import { useEffect, useRef, useState } from "react";
 import QRCode from "react-qr-code";
+import { type } from "@tauri-apps/plugin-os";
 
 type ExportState = "scanning" | "authenticating" | "exporting";
 
@@ -26,6 +28,16 @@ export function QrExportPage() {
   const [session, setSession] = useState<ExportSession | null>(null);
   const [currentFrame, setCurrentFrame] = useState<string>("");
   const [framesPlayed, setFramesPlayed] = useState(0);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    // Check if we are running in a desktop environment (Tauri)
+    // and if the OS is one of the target desktop platforms.
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+  }, []);
 
   // === Stage 1: Scanning ===
   useEffect(() => {
@@ -131,20 +143,32 @@ export function QrExportPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background relative overflow-hidden">
-      {/* Top Bar */}
-      <div className="absolute top-0 left-0 right-0 z-20 p-4 flex items-center">
+    <div className={cn(
+      "flex flex-col h-screen bg-background overflow-hidden",
+      state !== "scanning" && "pt-safe",
+    )}>
+      {/* Header - absolute during scanning to overlay camera, flow-based otherwise */}
+      <header className={cn(
+        "p-4 flex items-center z-20",
+        state === "scanning" && "absolute top-0 left-0 right-0 pt-safe pl-safe",
+        isDesktop ? "pt-8" : "pt-0",
+      )}>
         <Button
           variant="ghost"
           size="icon"
-          className={state === "scanning" ? "text-white hover:bg-white/20" : "text-foreground"}
+          className={cn(
+            state === "scanning" ? "text-white hover:bg-white/20" : "text-foreground"
+          )}
           onClick={handleBack}
         >
           <IconArrowLeft className="w-6 h-6" />
         </Button>
-      </div>
+      </header>
 
-      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8 animate-in fade-in duration-300">
+      <div className={cn(
+        "flex-1 flex flex-col items-center justify-center p-6 space-y-8 animate-in fade-in duration-300",
+        state === "scanning" && "absolute inset-0"
+      )}>
 
         {state === "scanning" && (
           <div className="w-full max-w-sm flex flex-col items-center gap-6">
@@ -197,7 +221,7 @@ export function QrExportPage() {
             </div>
 
             <div className="w-full flex justify-center">
-              <Button variant="outline" className="w-full max-w-[200px]" onClick={handleBack}>
+              <Button variant="outline" className="h-12" style={{ width: 280 * 0.9 }} onClick={handleBack}>
                 Done
               </Button>
             </div>

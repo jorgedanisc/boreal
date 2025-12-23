@@ -8,6 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  fetch-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Fetch Assets
+        working-directory: apps/client
+        run: |
+          bun install
+          npm run fetch:ffmpeg
+          npm run fetch:models
+      - name: Save assets cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            apps/client/src-tauri/binaries
+            apps/client/src-tauri/models
+          key: assets-${{ hashFiles('apps/client/scripts/**') }}
+
   release:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
@@ -57,7 +76,7 @@ jobs:
           fi
 
   publish-tauri:
-    needs: release
+    needs: [release, fetch-assets]
     if: needs.release.outputs.new_release_published == 'true'
     permissions:
       contents: write
@@ -65,28 +84,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Temporarily disabled - only building for Raspberry Pi (ARM64 Linux)
-          # - platform: "macos-15" # Apple Silicon
-          #   args: "--target aarch64-apple-darwin"
-          #   target: "aarch64-apple-darwin"
-          # - platform: "macos-13" # Intel
-          #   args: "--target x86_64-apple-darwin"
-          #   target: "x86_64-apple-darwin"
-          # - platform: "ubuntu-22.04"
-          #   args: "--bundles deb"
-          #   target: "x86_64-unknown-linux-gnu"
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin"
+            target: "universal-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: "--bundles deb"
+            target: "x86_64-unknown-linux-gnu"
           - platform: "ubuntu-22.04"
             args: "--target aarch64-unknown-linux-gnu --bundles deb,appimage"
             target: "aarch64-unknown-linux-gnu"
-          # - platform: "ubuntu-24.04"
-          #   args: "--bundles appimage,rpm"
-          #   target: "x86_64-unknown-linux-gnu"
-          # - platform: "windows-latest"
-          #   args: ""
-          #   target: "x86_64-pc-windows-msvc"
-          # - platform: "windows-11-arm"
-          #   args: "--target aarch64-pc-windows-msvc"
-          #   target: "aarch64-pc-windows-msvc"
+          - platform: "ubuntu-24.04"
+            args: "--bundles appimage,rpm"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "windows-latest"
+            args: ""
+            target: "x86_64-pc-windows-msvc"
+          - platform: "windows-11-arm"
+            args: "--target aarch64-pc-windows-msvc"
+            target: "aarch64-pc-windows-msvc"
 
     uses: ./.github/workflows/build.yml
     with:
@@ -96,5 +111,6 @@ jobs:
       sign-binaries: true
       asset-prefix: "boreal"
       upload-artifacts: false
+      use-asset-cache: true
       release-id: ${{ needs.release.outputs.version }} # Use version as release ref since SR tags it
     secrets: inherit

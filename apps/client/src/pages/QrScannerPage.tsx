@@ -124,10 +124,12 @@ export function QrScannerPage() {
   // Camera management
   const [cameras, setCameras] = useState<Array<{ id: string; label: string }>>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>("");
-  const isDesktop = type() === "macos" || type() === "windows" || type() === "linux";
+  const [isDesktop, setIsDesktop] = useState(false);
 
   // Prevent multiple completions
   const isCompletingRef = useRef(false);
+
+
 
   useEffect(() => {
     const init = async () => {
@@ -139,6 +141,12 @@ export function QrScannerPage() {
         setError("Failed to initialize import session");
       }
     };
+
+    const osType = type();
+    if (osType === 'linux' || osType === 'macos' || osType === 'windows') {
+      setIsDesktop(true);
+    }
+    
     init();
   }, []);
 
@@ -219,19 +227,28 @@ export function QrScannerPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-background relative overflow-hidden">
-      {/* Top Bar */}
-      <div className="absolute top-0 left-0 right-0 z-30 p-4 flex justify-between items-center bg-transparent pointer-events-none">
+    <div className={cn(
+      "flex flex-col h-screen bg-background overflow-hidden",
+      state !== "scanning" && "pt-safe"
+    )}>
+      {/* Header - absolute during scanning to overlay camera, flow-based otherwise */}
+      <header className={cn(
+        "p-4 flex justify-between items-center z-30",
+        state === "scanning" && "absolute top-0 left-0 right-0 pt-safe pl-safe",
+        isDesktop ? "pt-8" : "pt-0",
+      )}>
         <Button
           variant="ghost"
           size="icon"
-          className="text-white hover:bg-white/20 backdrop-blur-sm pointer-events-auto"
+          className={cn(
+            state === "scanning" ? "text-white hover:bg-white/20 backdrop-blur-sm" : "text-foreground"
+          )}
           onClick={handleBack}
         >
           <IconArrowLeft className="w-6 h-6" />
         </Button>
 
-        <div className="flex gap-2 pointer-events-auto">
+        <div className="flex gap-2">
           {isDesktop && cameras.length > 0 && state === "scanning" && (
             <Select value={selectedCameraId} onValueChange={setSelectedCameraId}>
               <SelectTrigger className="w-[180px] bg-black/40 backdrop-blur-md text-white border-white/20 h-8 text-xs">
@@ -245,7 +262,7 @@ export function QrScannerPage() {
             </Select>
           )}
         </div>
-      </div>
+      </header>
 
       {state === "request" && (
         <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8 animate-in fade-in zoom-in-95 duration-300">
@@ -266,7 +283,8 @@ export function QrScannerPage() {
 
           <Button
             size="lg"
-            className="w-full max-w-xs rounded-full h-12 text-base font-semibold shadow-lg shadow-primary/20"
+            className="rounded-full h-12 text-base font-semibold"
+            style={{ width: 240 * 0.9 }}
             onClick={() => setState("scanning")}
           >
             <IconScan className="w-5 h-5 mr-2" />

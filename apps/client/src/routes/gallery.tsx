@@ -6,6 +6,7 @@ import { UploadTrigger } from '@/components/upload/UploadTrigger';
 import { RenameVaultDialog } from '@/components/vault/RenameVaultDialog';
 import { ShareVaultDialog } from '@/components/vault/ShareVaultDialog';
 import { getActiveVault, renameVault, VaultPublic } from '@/lib/vault';
+import { IconShare3, IconUpload } from '@tabler/icons-react';
 import { createFileRoute, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
 import { ChevronLeft, Plus, Share2Icon, ShareIcon } from 'lucide-react';
@@ -113,7 +114,7 @@ function GalleryLayout() {
                   </Button>
                   <button
                     onClick={() => activeVault && setRenameOpen(true)}
-                    className="text-xl font-semibold tracking-tight px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors text-left"
+                    className="text-xl font-medium tracking-tight px-2 py-0.5 rounded-md hover:bg-muted/50 transition-colors text-left"
                   >
                     {activeVault?.name || "Photos"}
                   </button>
@@ -125,22 +126,23 @@ function GalleryLayout() {
 
               {/* Top Right: Actions */}
               <div className="flex items-center gap-3">
+                <UploadTrigger>
+                  <Button variant="glass" className="rounded-full px-3 pr-4 font">
+                    <IconUpload className="size-4 mr-1" />
+                    Upload
+                  </Button>
+                </UploadTrigger>
+
                 {activeVault && (
                   <ShareVaultDialog
                     vaultId={activeVault.id}
                     trigger={
-                      <Button variant="glass" className="h-9 w-9 p-0 rounded-full">
-                        <Share2Icon className="w-5 h-5 text-foreground" />
+                      <Button variant="glass" className="size-9 p-0 rounded-full">
+                        <IconShare3 className="size-4 text-foreground" />
                       </Button>
                     }
                   />
                 )}
-
-                <UploadTrigger>
-                  <Button variant="glass" className="rounded-full px-5 font-medium">
-                    Upload
-                  </Button>
-                </UploadTrigger>
               </div>
             </div>
           </header>

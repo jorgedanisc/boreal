@@ -54,7 +54,7 @@
       "description": "We'll open AWS CloudFormation to set up your storage. It only takes a minute.",
       "steps": {
         "1": "Click the button below to open AWS in your browser",
-        "2": "Log in to your AWS account (or create one)",
+        "2": "Log in to your AWS account (or create one). Please ensure you enable MFA for security purposes.",
         "3": "Review the stack and click \"Create Stack\"",
         "4": "Wait about 30 seconds for setup to complete",
         "5": "Go to the \"Outputs\" tab and copy the Vault Code"
