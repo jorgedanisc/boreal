@@ -6,7 +6,42 @@ on:
   workflow_dispatch:
 
 jobs:
+  benchmark:
+    name: Run Compression Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            apps/client/src-tauri/target/
+          key: ${{ runner.os }}-cargo-benchmark-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-benchmark-
+      - name: Run Compression Benchmark
+        working-directory: apps/client/src-tauri
+        run: |
+          # Generate/Ensure fixtures exist (assuming they are checked in or generated)
+          cargo run --bin benchmark -- ../../../.ci-fixtures/out
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: compression-report
+          path: apps/client/src-tauri/compression_report.md
+
   fetch-assets:
+    needs: benchmark
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
