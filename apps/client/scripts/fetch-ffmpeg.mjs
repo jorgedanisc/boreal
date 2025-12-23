@@ -236,6 +236,39 @@ async function main() {
 
   log(args, `Targets: ${targets.join(", ")}`);
 
+  log(args, `Targets: ${targets.join(", ")}`);
+
+  // Optimization: Check if all expected outputs already exist
+  let allExist = true;
+  for (const triple of targets) {
+    const isWin = triple.includes("windows");
+    const exe = isWin ? ".exe" : "";
+    const basePaths = [path.join(args.out, `${args.binBaseName}-${triple}${exe}`)];
+    if (args.withFfprobe) {
+      basePaths.push(path.join(args.out, `ffprobe-${triple}${exe}`));
+    }
+
+    // specific check for universal
+    if (triple === "universal-apple-darwin") {
+      // universal is built at the end, checks are handled there.
+      // but for "allExist" logic, we should check if the RESULT exists
+      // The loop below handles 'universal-apple-darwin' as a standard target string
+      // constructing `ffmpeg-universal-apple-darwin`, which is exactly what we output.
+    }
+
+    for (const p of basePaths) {
+      if (!fs.existsSync(p)) {
+        allExist = false;
+        break;
+      }
+    }
+  }
+
+  if (allExist && !args.force) {
+    log(args, "All targets already exist in output directory. Skipping fetch.");
+    return;
+  }
+
   const release = await resolveRelease(args.repo, args.version);
   const tag = release.tag_name;
   if (!tag) throw new Error(`Could not resolve release tag_name for repo=${args.repo}, version=${args.version}`);

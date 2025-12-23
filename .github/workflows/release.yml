@@ -75,6 +75,30 @@ jobs:
             echo "new_release_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Download Benchmark Report
+        if: steps.outputs.outputs.new_release_published == 'true'
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: build-test.yml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: compression-report
+          path: benchmark-report
+
+      - name: Append Benchmark to Release
+        if: steps.outputs.outputs.new_release_published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.outputs.outputs.version }}"
+          REPORT_FILE="benchmark-report/compression_report.md"
+          if [ -f "$REPORT_FILE" ]; then
+            echo -e "\n\n## Compression Benchmark Results\n" >> release_notes.md
+            cat "$REPORT_FILE" >> release_notes.md
+            gh release edit "v$VERSION" --notes-file release_notes.md --append
+          else
+            echo "Benchmark report not found."
+          fi
+
   publish-tauri:
     needs: [release, fetch-assets]
     if: needs.release.outputs.new_release_published == 'true'

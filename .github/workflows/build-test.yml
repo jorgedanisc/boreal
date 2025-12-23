@@ -72,6 +72,8 @@ jobs:
         with:
           name: compression-report
           path: apps/client/src-tauri/compression_report.md
+      - name: Add to Summary
+        run: cat apps/client/src-tauri/compression_report.md >> $GITHUB_STEP_SUMMARY
 
 
   build-test:
