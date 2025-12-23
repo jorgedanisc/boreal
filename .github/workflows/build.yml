@@ -207,6 +207,7 @@ jobs:
 
       - name: rustup install target
         if: ${{ inputs.target != '' }}
+        shell: bash
         run: |
           if [ "${{ inputs.target }}" == "universal-apple-darwin" ]; then
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
