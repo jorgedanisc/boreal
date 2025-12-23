@@ -2307,6 +2307,7 @@ async fn embed_all_photos_internal(
                 }
             }
         } else {
+            log::warn!("Missing cache for {} ({})", photo_id, media_type);
             no_cache_count += 1;
         }
     }
@@ -2427,6 +2428,7 @@ async fn embed_all_photos(
                     }
                 }
             } else {
+                log::warn!("Missing cache for {} ({})", photo_id, media_type);
                 no_cache_count += 1;
             }
         }

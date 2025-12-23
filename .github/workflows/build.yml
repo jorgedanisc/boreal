@@ -249,6 +249,12 @@ jobs:
           fi
           echo "platform=${patched_platform}" >> $GITHUB_OUTPUT
 
+      - name: Fetch FFmpeg
+        run: npm run fetch:ffmpeg
+
+      - name: Fetch Models
+        run: npm run fetch:models
+
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:

@@ -152,20 +152,52 @@ export function SearchPage() {
     // Semantic matches (with scores)
     const semanticScores = new Map(semanticResults.map(r => [r.id, r.score]));
 
-    // Combine: semantic results first (sorted by score), then filename matches
-    const semanticIds = new Set(semanticResults.map(r => r.id));
+    // Date matching (DD/MM/YYYY)
+    const dateRegex = /(\d{1,2})\/(\d{1,2})\/(\d{4})/;
+    const dateMatch = query.match(dateRegex);
+    let dateMatches = new Set<string>();
 
+    if (dateMatch) {
+      const [_, day, month, year] = dateMatch;
+      // Pad to 2 digits
+      const d = day.padStart(2, '0');
+      const m = month.padStart(2, '0');
+      const searchDate = `${year}-${m}-${d}`;
+
+      dateMatches = new Set(
+        allPhotos
+          .filter(p => {
+            // Check created_at (typically ISO string YYYY-MM-DD...)
+            const created = p.created_at.startsWith(searchDate);
+            // Check captured_at if exists
+            const captured = p.captured_at ? p.captured_at.startsWith(searchDate) : false;
+            return created || captured;
+          })
+          .map(p => p.id)
+      );
+    }
+
+    // Combine: semantic results -> date matches -> filename matches
+    const semanticIds = new Set(semanticResults.map(r => r.id));
     const results: PhotoWithVault[] = [];
 
-    // Add semantic results first, sorted by score
+    // 1. Semantic results (sorted by score)
     const semanticPhotos = allPhotos
       .filter(p => semanticIds.has(p.id))
       .sort((a, b) => (semanticScores.get(b.id) || 0) - (semanticScores.get(a.id) || 0));
     results.push(...semanticPhotos);
 
-    // Add filename matches that aren't already in semantic results
+    // 2. Date matches (if not already in semantic)
+    if (dateMatches.size > 0) {
+      const datePhotos = allPhotos.filter(
+        p => dateMatches.has(p.id) && !semanticIds.has(p.id)
+      );
+      results.push(...datePhotos);
+    }
+
+    // 3. Filename matches (if not already added)
     const filenameOnlyPhotos = allPhotos.filter(
-      p => filenameMatches.has(p.id) && !semanticIds.has(p.id)
+      p => filenameMatches.has(p.id) && !semanticIds.has(p.id) && !dateMatches.has(p.id)
     );
     results.push(...filenameOnlyPhotos);
 
@@ -275,13 +307,13 @@ export function SearchPage() {
               )}
             </motion.div>
 
-            <Button
-              variant="glass"
-              className="shrink-0 h-9 w-9 p-0 rounded-full"
+            <motion.button
+              // variant="glass"
+              className="shrink-0 size-10 p-0 rounded-full border border-white/10 bg-secondary/60 hover:bg-secondary/80 backdrop-blur-md flex items-center justify-center transition-colors pointer-events-auto"
               onClick={() => navigate({ to: "/" })}
             >
               <XIcon className="w-5 h-5 text-foreground" />
-            </Button>
+            </motion.button>
           </div>
 
           {/* Results Count + Refresh Button */}

@@ -176,6 +176,17 @@ export function MapPage() {
 
     // Query all visible features from the clustered source
     const features = map.querySourceFeatures(PHOTOS_SOURCE_ID);
+    const zoom = map.getZoom();
+
+    // If we are completely zoomed out, don't show any markers
+    // This avoids confusing "aggregate" locations that look wrong
+    if (zoom < 2) {
+      markersOnScreenRef.current.forEach((marker, id) => {
+        marker.remove();
+      });
+      markersOnScreenRef.current.clear();
+      return;
+    }
 
     // Process features and resolve cluster positions
     const markerPromises = features.map(async (feature) => {
@@ -193,21 +204,17 @@ export function MapPage() {
       // Create a unique key for this marker
       const markerId = isCluster ? `cluster_${clusterId}` : `photo_${props?.photoId}`;
 
-      // For clusters, get the first leaf's actual coordinates instead of centroid
-      // This ensures markers appear at real photo locations
+      // For clusters, we use the centroidCoords (which is the default).
+      // We only need to fetch photo info for the thumbnail.
       let markerCoords = centroidCoords;
       let photoIds: string[] = [];
       let clusterPhotos: GeoPhoto[] = [];
 
       if (isCluster && clusterId !== null) {
         try {
-          // Get the first leaf to use its actual coordinates
+          // Get the first leaf to use for the thumbnail
           const leaves = await source.getClusterLeaves(clusterId, 1, 0);
           if (leaves.length > 0) {
-            const leafGeometry = leaves[0].geometry;
-            if (leafGeometry.type === 'Point') {
-              markerCoords = leafGeometry.coordinates as [number, number];
-            }
             const leafPhotoId = leaves[0].properties?.photoId;
             if (leafPhotoId) {
               photoIds = [leafPhotoId];
@@ -223,8 +230,6 @@ export function MapPage() {
             const photo = photosById.get(firstPhotoId);
             if (photo) {
               clusterPhotos = [photo];
-              // Use the photo's actual coordinates
-              markerCoords = [photo.longitude, photo.latitude];
             }
           }
         }
