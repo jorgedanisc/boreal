@@ -128,7 +128,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
 
 
                 <div className="relative">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {/* Show only the first MAX_VISIBLE_VAULTS items fully */}
                     {vaults.slice(0, MAX_VISIBLE_VAULTS).map((vault) => (
                       <VaultCard
@@ -193,11 +193,11 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 </Button>
               )}
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col sm:grid sm:grid-cols-3 gap-3">
                 <button
                   type="button"
                   onClick={onCreateVault}
-                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative  rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <IconPlus className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -210,7 +210,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 <button
                   type="button"
                   onClick={() => navigate({ to: "/scan" })}
-                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative  rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <ScanQrCodeIcon className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -223,7 +223,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 <button
                   type="button"
                   onClick={() => navigate({ to: "/pairing" })}
-                  className="relative overflow-hidden rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative  rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <IconWifi className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />

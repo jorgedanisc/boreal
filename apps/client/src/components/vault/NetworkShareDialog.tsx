@@ -2,12 +2,12 @@ import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import {
   IconCheck,
   IconLoader2,
@@ -25,6 +25,7 @@ import {
   type DiscoveredDevice,
   type PairingStatus,
 } from "@/lib/pairing";
+import { Spinner } from "@/components/ui/spinner";
 
 interface NetworkShareDialogProps {
   open: boolean;
@@ -139,59 +140,61 @@ export function NetworkShareDialog({
   }, [onOpenChange]);
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="text-base font-medium">Share Over Network</DialogTitle>
-          <DialogDescription className="text-xs">
-            {getDescription(state)}
-          </DialogDescription>
-        </DialogHeader>
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="max-h-[85vh]">
+        <div className="mx-auto w-full max-w-sm">
+          <DrawerHeader>
+            <DrawerTitle className="text-base font-medium">Share Over Network</DrawerTitle>
+            <DrawerDescription className="text-xs">
+              {getDescription(state)}
+            </DrawerDescription>
+          </DrawerHeader>
 
-        <div className="min-h-[240px] flex flex-col">
-          <AnimatePresence mode="wait">
-            {state === "discovering" && (
-              <DiscoveringContent
-                key="discovering"
-                devices={devices}
-                onSelectDevice={handleSelectDevice}
-              />
-            )}
+          <div className="min-h-[240px] flex flex-col p-4 pt-0">
+            <AnimatePresence mode="wait">
+              {state === "discovering" && (
+                <DiscoveringContent
+                  key="discovering"
+                  devices={devices}
+                  onSelectDevice={handleSelectDevice}
+                />
+              )}
 
-            {(state === "connecting" || state === "verifying") && (
-              <VerifyingContent
-                key="verifying"
-                deviceName={selectedDevice?.name}
-                verificationCode={pairingStatus?.verification_code}
-                isConnecting={state === "connecting"}
-                onConfirm={handleSenderConfirm}
-                onCancel={handleClose}
-              />
-            )}
+              {(state === "connecting" || state === "verifying") && (
+                <VerifyingContent
+                  key="verifying"
+                  deviceName={selectedDevice?.name}
+                  verificationCode={pairingStatus?.verification_code}
+                  isConnecting={state === "connecting"}
+                  onConfirm={handleSenderConfirm}
+                  onCancel={handleClose}
+                />
+              )}
 
-            {state === "waiting" && (
-              <WaitingContent key="waiting" deviceName={selectedDevice?.name} />
-            )}
+              {state === "waiting" && (
+                <WaitingContent key="waiting" deviceName={selectedDevice?.name} />
+              )}
 
-            {state === "success" && (
-              <SuccessContent key="success" onClose={handleClose} />
-            )}
+              {state === "success" && (
+                <SuccessContent key="success" onClose={handleClose} />
+              )}
 
-            {state === "error" && (
-              <ErrorContent
-                key="error"
-                error={error}
-                onRetry={() => {
-                  setState("discovering");
-                  setError(null);
-                  startNetworkDiscovery().catch(console.error);
-                }}
-              />
-            )}
-          </AnimatePresence>
+              {state === "error" && (
+                <ErrorContent
+                  key="error"
+                  error={error}
+                  onRetry={() => {
+                    setState("discovering");
+                    setError(null);
+                    startNetworkDiscovery().catch(console.error);
+                  }}
+                />
+              )}
+            </AnimatePresence>
+          </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </DrawerContent>
+    </Drawer>
   );
 }
 
@@ -212,7 +215,7 @@ function DiscoveringContent({
     >
       {/* Scanning indicator */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
-        <IconLoader2 className="w-3 h-3 animate-spin" />
+        <Spinner className="size-4" />
         <span>Scanning for devices...</span>
       </div>
 

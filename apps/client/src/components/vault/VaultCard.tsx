@@ -38,7 +38,7 @@ export function VaultCard({
       onClick={() => onOpen(vault.id)}
       disabled={!!openLoading}
       className={cn(
-        "relative overflow-hidden rounded-xl border p-3 text-left transition-all duration-200 w-full group",
+        "relative overflow-hidden rounded-xl border p-3 text-left transition-all duration-200 w-full group @container",
         "hover:scale-[1.02] active:scale-[0.98]",
         "border-border/50 bg-card/50 hover:border-primary/60 hover:bg-gradient-to-br hover:from-primary/10 hover:via-primary/5 hover:to-transparent"
       )}
@@ -69,13 +69,13 @@ export function VaultCard({
             <p className="text-xs text-muted-foreground/80 truncate">{vault.bucket}</p>
           )}
           {vault.visits !== undefined && vault.visits > 0 && (
-            <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1.5">
+            <p className="text-[10px] text-muted-foreground/60 flex flex-col @[200px]:flex-row @[200px]:items-center gap-0.5 @[200px]:gap-1.5">
               <span>{vault.visits} visits</span>
               {vault.total_size_bytes > 0 && (
-                <>
-                  <span className="w-0.5 h-0.5 rounded-full bg-muted-foreground/40" />
-                  <span>{formatBytes(vault.total_size_bytes)}</span>
-                </>
+                <span className="hidden @[200px]:inline w-0.5 h-0.5 rounded-full bg-muted-foreground/40" />
+              )}
+              {vault.total_size_bytes > 0 && (
+                <span>{formatBytes(vault.total_size_bytes)}</span>
               )}
             </p>
           )}

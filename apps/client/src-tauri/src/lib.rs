@@ -5,7 +5,7 @@ mod db;
 mod embedding;
 mod exif_extractor;
 mod file_filter;
-mod image_processing;
+
 mod manifest;
 pub mod media_processor;
 mod memories;
@@ -698,10 +698,14 @@ async fn bootstrap_vault(
 
 #[tauri::command]
 async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    // 1. Read file (Heavy IO, do first without locks)
-    let original_bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let thumbnail_bytes = image_processing::generate_thumbnail(&path)
-        .map_err(|e| format!("Failed to generate thumbnail: {}", e))?;
+    use std::path::Path;
+
+    // 1. Process Image using shared Media Processor (WebP Q90 Original, WebP Q70 Thumbnail)
+    let path_obj = Path::new(&path);
+    let processed = media_processor::process_image(path_obj)
+        .map_err(|e| format!("Failed to process image: {}", e))?;
+
+    let thumbnail_bytes = processed.thumbnail.ok_or_else(|| "Failed to generate thumbnail".to_string())?;
 
     // 2. Prepare Config & Storage (Get locks, clone need data, drop locks)
     let (vault_key, storage) = {
@@ -721,22 +725,23 @@ async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), St
     let vault_key = BASE64.decode(&vault_key).unwrap();
     let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
 
-    let enc_original = crypto::encrypt(&original_bytes, &key_arr)
+    let enc_original = crypto::encrypt(&processed.original, &key_arr)
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
     let enc_thumbnail = crypto::encrypt(&thumbnail_bytes, &key_arr)
         .map_err(|e| format!("Thumbnail encryption failed: {}", e))?;
 
     // 4. Upload (Network IO, async, safe because we have cloned storage)
-    let filename = PathBuf::from(&path)
+    let filename = path_obj
         .file_name()
         .unwrap()
         .to_string_lossy()
         .to_string();
     let id = uuid::Uuid::new_v4().to_string();
 
-    let original_key = format!("originals/{}", id);
-    let thumbnail_key = format!("thumbnails/{}.avif", id);
+    // Use consistent naming convention matching upload_manager.rs
+    let original_key = format!("originals/images/{}.webp", id);
+    let thumbnail_key = format!("thumbnails/{}.webp", id);
 
     // Capture sizes before move
     let original_size = enc_original.len();
@@ -763,8 +768,8 @@ async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), St
             rusqlite::params![
                 id,
                 filename,
-                0, // TODO: Extract dims
-                0,
+                processed.width,
+                processed.height,
                 chrono::Utc::now().to_rfc3339(),
                 original_size, // Use Encrypted Size for accurate vault usage
                 thumbnail_size,
