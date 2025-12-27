@@ -232,7 +232,7 @@ function DiscoveringContent({
         ) : (
           devices.map((device) => (
             <motion.button
-              key={device.id}
+              key={device.ip}
               className="w-full p-3 bg-muted/50 hover:bg-muted rounded-lg flex items-center gap-3 transition-colors"
               onClick={() => onSelectDevice(device)}
               initial={{ opacity: 0, y: 5 }}

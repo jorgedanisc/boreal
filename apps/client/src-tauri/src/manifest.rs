@@ -75,20 +75,7 @@ pub struct MergeStats {
     pub memories_updated: u32,
 }
 
-impl ManifestData {
-    /// Create a new empty manifest
-    pub fn new(name: String) -> Self {
-        Self {
-            version: MANIFEST_VERSION,
-            name,
-            visits: 0,
-            photos: Vec::new(),
-            memories: Vec::new(),
-            memory_media: Vec::new(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-}
+
 
 /// Export all vault data from SQLite to a ManifestData struct
 pub fn export_manifest(conn: &Connection) -> Result<ManifestData> {

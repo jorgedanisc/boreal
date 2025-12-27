@@ -90,8 +90,5 @@ impl VisionEmbedder {
         Ok(embedding.mapv(|x| x / norm))
     }
 
-    /// Get embedding dimension (should be 768)
-    pub fn embedding_dim(&self) -> usize {
-        768
-    }
+
 }

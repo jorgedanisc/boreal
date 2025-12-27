@@ -16,7 +16,6 @@ jobs:
         run: |
           bun install
           bun run fetch:ffmpeg
-          bun run fetch:models
       - name: Save assets cache
         uses: actions/cache/save@v4
         with:

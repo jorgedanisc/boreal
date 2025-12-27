@@ -281,10 +281,6 @@ jobs:
         working-directory: apps/client
         run: bun run fetch:ffmpeg
 
-      - name: Fetch Models
-        if: steps.restore-assets-cache.outputs.cache-hit != 'true'
-        working-directory: apps/client
-        run: bun run fetch:models
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:

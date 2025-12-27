@@ -163,10 +163,7 @@ impl TextEmbedder {
         Ok(pooled.mapv(|x| x / divisor))
     }
 
-    /// Get embedding dimension (should be 768)
-    pub fn embedding_dim(&self) -> usize {
-        768
-    }
+
 }
 
 /// Layer normalization with epsilon 1e-12 (from model config)

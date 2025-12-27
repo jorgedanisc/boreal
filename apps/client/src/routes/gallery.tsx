@@ -155,7 +155,7 @@ function GalleryLayout() {
         {showBottomNav && (
           <div className="fixed bottom-0 left-0 right-0 pb-safe z-40 pointer-events-none">
             {/* Nav is centered, plus button is positioned absolutely to the right. Use pointer-events-auto for children. */}
-            <div className="relative bottom-6 flex justify-center w-full pointer-events-auto">
+            <div className="relative bottom-2 flex justify-center w-full pointer-events-auto">
               <div className="relative">
                 <GalleryBottomNav currentView={currentView} />
 

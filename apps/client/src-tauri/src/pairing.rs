@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use x25519_dalek::{EphemeralSecret, PublicKey};
+use socket2::{Socket, Domain, Type, Protocol};
 
 const SERVICE_TYPE: &str = "_boreal-pair._tcp.local.";
 const PAIRING_TIMEOUT_SECS: u64 = 180; // 3 minutes
@@ -725,10 +726,20 @@ impl PairingManager {
 
     async fn start_udp_discovery(&self) -> Result<()> {
         let port = 8850; // Hardcoded UDP_BEACON_PORT
-        let socket = tokio::net::UdpSocket::bind(format!("0.0.0.0:{}", port))
-            .await
-            .map_err(|e| anyhow!("Failed to bind UDP discovery port {}: {}", port, e))?;
+
+        // Create socket using socket2 to enable SO_REUSEADDR/SO_REUSEPORT
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        socket.set_reuse_address(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
         socket.set_broadcast(true)?;
+        
+        let address = format!("0.0.0.0:{}", port).parse::<std::net::SocketAddr>()?;
+        socket.bind(&address.into())?;
+        socket.set_nonblocking(true)?;
+
+        let socket = tokio::net::UdpSocket::from_std(socket.into())
+            .map_err(|e| anyhow!("Failed to convert socket: {}", e))?;
 
         let devices_store = self.discovered_devices.clone();
         // let shutdown_tx = self.shutdown_tx.clone(); // Not used
@@ -744,7 +755,7 @@ impl PairingManager {
                 if status_cleanup.read().await.state != PairingState::Discovering {
                     break;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await; // Faster prune check
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await; // Prune check every 5s
 
                 let mut devices = devices_store_cleanup.write().await;
                 let now = std::time::SystemTime::now();
@@ -752,7 +763,7 @@ impl PairingManager {
 
                 devices.retain(|_, dev| {
                     if let Ok(age) = now.duration_since(dev.last_seen) {
-                        age.as_secs() < 4 // Remove devices not seen for 4s
+                        age.as_secs() < 15 // Remove devices not seen for 15s
                     } else {
                         false
                     }
@@ -791,6 +802,13 @@ impl PairingManager {
                                     // Security Check: Ignore non-private IPs
                                     if !is_private_ip(&ip) {
                                         continue;
+                                    }
+
+                                    // Self-discovery filter: Ignore our own IP
+                                    if let Ok(local_ip) = local_ip_address::local_ip() {
+                                        if ip == local_ip.to_string() {
+                                            continue;
+                                        }
                                     }
 
                                     // Deduplicate logic: Key by IP to handle restart/duplicates

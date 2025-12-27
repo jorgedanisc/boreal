@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub use download::{get_model_paths, get_models_status, models_exist, ModelStatus};
+pub use download::{get_model_paths, models_exist};
 pub use search::EmbeddingIndex;
 pub use text::TextEmbedder;
 pub use vision::VisionEmbedder;
@@ -23,16 +23,14 @@ pub struct EmbeddingState {
     pub vision: Arc<Mutex<Option<VisionEmbedder>>>,
     pub text: Arc<Mutex<Option<TextEmbedder>>>,
     pub index: Arc<Mutex<EmbeddingIndex>>,
-    pub models_dir: PathBuf,
 }
 
 impl EmbeddingState {
-    pub fn new(models_dir: PathBuf) -> Self {
+    pub fn new(_models_dir: PathBuf) -> Self {
         Self {
             vision: Arc::new(Mutex::new(None)),
             text: Arc::new(Mutex::new(None)),
             index: Arc::new(Mutex::new(EmbeddingIndex::new())),
-            models_dir,
         }
     }
 

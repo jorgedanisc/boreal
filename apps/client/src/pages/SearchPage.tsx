@@ -4,12 +4,14 @@ import { AudioPlayer } from '@/components/gallery/AudioPlayer';
 import { getAllPhotos, getThumbnailForVault, PhotoWithVault } from '@/lib/vault';
 import { useNavigate } from '@tanstack/react-router';
 import { type } from '@tauri-apps/plugin-os';
-import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'motion/react';
 import { SearchIcon, XIcon, SparklesIcon, RefreshCwIcon, CheckCircleIcon } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { GlobalPhotoSlider, PhotoMetadata } from '@/components/gallery/PhotoLightbox';
 import 'react-photo-view/dist/react-photo-view.css';
+import * as embeddingService from '@/lib/embeddingService';
+import { IconCloudDownload, IconLoader } from '@tabler/icons-react';
+
 
 interface SemanticSearchResult {
   id: string;
@@ -26,11 +28,14 @@ export function SearchPage() {
   const [lightboxIndex, setLightboxIndex] = useState(-1);
   const [audioPlayer, setAudioPlayer] = useState<{ id: string; filename: string } | null>(null);
 
-  // AI Search state (enabled by default)
-  const [aiReady, setAiReady] = useState(false);
+  // AI Search state
+  const [modelStatus, setModelStatus] = useState<{ available: boolean; ready: boolean; indexed_count: number }>({ available: false, ready: false, indexed_count: 0 });
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{ downloaded: number; total: number; label: string } | null>(null);
+  const [isIndexing, setIsIndexing] = useState(false);
   const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]);
   const [embeddingCount, setEmbeddingCount] = useState(0);
-  const [isEmbedding, setIsEmbedding] = useState(false);
+
 
   useEffect(() => {
     const osType = type();
@@ -39,41 +44,92 @@ export function SearchPage() {
     }
   }, []);
 
-  // Initialize AI models on mount (if available)
-  useEffect(() => {
-    initAISearch();
+  // Check status on mount (WebAssembly-based, works on all platforms)
+  const checkStatus = useCallback(async () => {
+    try {
+      const status = await embeddingService.getStatus();
+      setModelStatus(status);
+      setEmbeddingCount(status.indexed_count);
+    } catch (e) {
+      console.error("Failed to get embedding status:", e);
+    }
   }, []);
 
-  const initAISearch = async () => {
-    try {
-      await invoke('init_embedding_models');
-      setAiReady(true);
-      // Get current embedding count
-      try {
-        const count = await invoke<number>('get_embedding_count');
-        setEmbeddingCount(count);
-      } catch {
-        // Command might not exist yet
+  useEffect(() => {
+    checkStatus();
+    // Poll every 5 seconds to update count/ready state
+    const interval = setInterval(checkStatus, 5000);
+
+    // Auto-init if downloaded but not ready
+    embeddingService.getStatus().then(status => {
+      if (status.available && !status.ready) {
+        console.log("Auto-initializing embedding models...");
+        embeddingService.initModels().then(checkStatus);
       }
+    });
+
+    return () => clearInterval(interval);
+  }, [checkStatus]);
+
+  const handleDownloadAndEnable = async () => {
+    try {
+      if (!modelStatus.available) {
+        setIsDownloading(true);
+        setDownloadProgress(null);
+        await embeddingService.downloadModels((downloaded, total, label) => {
+          setDownloadProgress({ downloaded, total, label });
+        });
+      }
+
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      // Initialize models
+      await embeddingService.initModels();
+      await checkStatus();
+
+      // Trigger indexing in background
+      handleIndex();
     } catch (e) {
-      // AI search not available (e.g., mobile or models not bundled)
-      console.log('AI search not available:', e);
+      console.error("Failed to setup models:", e);
+      setIsDownloading(false);
+      setDownloadProgress(null);
     }
   };
 
-  const refreshEmbeddings = useCallback(async () => {
-    if (!aiReady || isEmbedding) return;
-    setIsEmbedding(true);
+  const handleIndex = async () => {
+    if (isIndexing) return;
+    setIsIndexing(true);
     try {
-      const newCount = await invoke<number>('embed_all_photos');
-      setEmbeddingCount(prev => prev + newCount);
-      console.log(`[AI] Refreshed embeddings: ${newCount} new`);
+      // Embed photos using WebAssembly service
+      let embeddedCount = 0;
+      for (const photo of allPhotos) {
+        const mediaType = photo.media_type || 'image';
+        if (mediaType === 'audio') continue; // Skip audio files
+        if (embeddingService.isInIndex(photo.id)) continue; // Already indexed
+
+        const thumbnail = thumbnails[photo.id];
+        if (!thumbnail) continue; // No thumbnail available
+
+        try {
+          const embedding = await embeddingService.embedImage(thumbnail);
+          embeddingService.addToIndex(photo.id, embedding, photo.vault_id);
+          embeddedCount++;
+        } catch (e) {
+          console.warn(`Failed to embed photo ${photo.id}:`, e);
+        }
+      }
+      console.log(`Indexed ${embeddedCount} new photos`);
+      await checkStatus();
     } catch (e) {
-      console.error('Failed to refresh embeddings:', e);
+      console.error("Indexing failed:", e);
     } finally {
-      setIsEmbedding(false);
+      setIsIndexing(false);
     }
-  }, [aiReady, isEmbedding]);
+  };
+
+  const refreshEmbeddings = () => {
+    handleIndex();
+  };
 
   // Load all photos on mount
   useEffect(() => {
@@ -118,14 +174,11 @@ export function SearchPage() {
     }
 
     // Only do semantic search if AI is ready
-    if (!aiReady) return;
+    if (!modelStatus.ready) return;
 
     const timer = setTimeout(async () => {
       try {
-        const results = await invoke<SemanticSearchResult[]>('search_photos_semantic', {
-          query: query.trim(),
-          limit: 100
-        });
+        const results = await embeddingService.search(query.trim(), 100);
         setSemanticResults(results);
       } catch (e) {
         console.error('Semantic search failed:', e);
@@ -133,8 +186,9 @@ export function SearchPage() {
       }
     }, 300);
 
+
     return () => clearTimeout(timer);
-  }, [query, aiReady]);
+  }, [query, modelStatus.ready]);
 
   // Filter photos: combine semantic results + filename matches, deduplicated
   const filteredPhotos = useMemo(() => {
@@ -289,7 +343,7 @@ export function SearchPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={aiReady ? "Search by contents or filename..." : "Search by filename..."}
+                placeholder={modelStatus.ready ? "Search by contents or filename..." : "Search by filename..."}
                 className="w-full h-10 pl-10 pr-10 rounded-full bg-secondary/60 backdrop-blur-md border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
                 whileFocus={{
                   scale: 1.01,
@@ -327,39 +381,63 @@ export function SearchPage() {
                 className="text-sm font-medium text-muted-foreground"
               >
                 {filteredPhotos.length} {filteredPhotos.length === 1 ? 'Result' : 'Results'}
-                {aiReady && <span className="text-xs ml-2 opacity-60">({embeddingCount} indexed)</span>}
+                {modelStatus.ready && <span className="text-xs ml-2 opacity-60">({embeddingCount} indexed)</span>}
               </motion.p>
-              {aiReady && (
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground overflow-hidden"
-                  onClick={refreshEmbeddings}
-                  disabled={isEmbedding}
-                >
-                  <motion.div
-                    animate={{ rotate: isEmbedding ? 360 : 0 }}
-                    transition={isEmbedding ? { repeat: Infinity, duration: 1, ease: "linear" } : { duration: 0.3 }}
-                    className="shrink-0"
-                  >
-                    <RefreshCwIcon className="w-3.5 h-3.5" />
-                  </motion.div>
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.span
-                      key={isEmbedding ? 'indexing' : 'ready'}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ duration: 0.15 }}
-                      className="whitespace-nowrap"
-                    >
-                      {isEmbedding ? 'Indexing...' : 'Refresh Index'}
-                    </motion.span>
-                  </AnimatePresence>
-                </Button>
-              )}
             </AnimatePresence>
 
+            <AnimatePresence mode="wait">
+              {!modelStatus.ready ? (
+                <motion.div
+                  key="download-btn"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                >
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground overflow-hidden"
+                    onClick={handleDownloadAndEnable}
+                    disabled={isDownloading || (modelStatus.available && !modelStatus.ready && !isDownloading)}
+                  >
+                    {isDownloading ? (
+                      <>
+                        <IconLoader className="w-4 h-4 mr-2 animate-spin" />
+                        Downloading Models...
+                      </>
+                    ) : modelStatus.available ? (
+                      <>
+                        <IconLoader className="w-4 h-4 mr-2 animate-spin" />
+                        Initializing Models...
+                      </>
+                    ) : (
+                      <>
+                        <IconCloudDownload className="w-4 h-4 mr-2" />
+                        Enable Vision Search (880MB)
+                      </>
+                    )}
+                  </Button>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="refresh-btn"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                >
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="rounded-full h-7 px-2.5 gap-1.5 text-xs text-muted-foreground hover:text-foreground overflow-hidden"
+                    onClick={refreshEmbeddings}
+                    disabled={isIndexing}
+                    title="Re-index new photos"
+                  >
+                    <RefreshCwIcon className={`w-4 h-4 ${isIndexing ? 'animate-spin' : ''}`} /> Re-index
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </header>
@@ -403,6 +481,6 @@ export function SearchPage() {
         audioId={audioPlayer?.id || ''}
         filename={audioPlayer?.filename || ''}
       />
-    </motion.div>
+    </motion.div >
   );
 }

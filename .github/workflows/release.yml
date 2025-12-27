@@ -18,7 +18,7 @@ jobs:
         run: |
           bun install
           npm run fetch:ffmpeg
-          npm run fetch:models
+
       - name: Save assets cache
         uses: actions/cache/save@v4
         with:

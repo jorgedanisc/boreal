@@ -93,7 +93,11 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
         let (processed, media_type) = match ext.as_str() {
             "mp4" | "webm" | "mov" | "mkv" => {
                 let output = test_dir.join(format!("output_{}.mp4", file_name));
-                let p = media_processor::process_video(&transcoder, &path, &output, None).await;
+                
+                // Simulate Frontend Frame Extraction
+                let frames = extract_simulation_frames(&path).ok();
+
+                let p = media_processor::process_video(&transcoder, &path, &output, frames).await;
                 fs::remove_file(output).ok();
                 (p, "Video")
             }
@@ -173,44 +177,61 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
 
     report.push_str("\n## Cost Projection (1 TB Library)\n\n");
 
-    let avg_ratio = total_comp as f64 / total_orig as f64;
+    report.push_str("\n## Cost Projection (1 TB Library)\n\n");
+
+    // Separation for Mobile Analysis
+    let mut total_av_orig = 0;
+    let mut total_img_orig = 0;
+    let mut total_img_comp = 0;
+
+    for r in results {
+        if r.media_type == "Video" || r.media_type == "Audio" {
+            total_av_orig += r.original_size_bytes;
+        } else {
+            total_img_orig += r.original_size_bytes;
+            total_img_comp += r.compressed_size_bytes;
+        }
+    }
+
+    let img_ratio = if total_img_orig > 0 { total_img_comp as f64 / total_img_orig as f64 } else { 1.0 };
+    let overall_ratio = total_comp as f64 / total_orig as f64;
     let thumb_ratio = total_thumb as f64 / total_orig as f64;
 
-    report.push_str(&format!(
-        "Based on average compression ratio of **{:.2}%**:\n\n",
-        avg_ratio * 100.0
-    ));
+    report.push_str(&format!("Based on average compression ratio of **{:.2}%**:\n\n", overall_ratio * 100.0));
 
-    // Projection inputs
+    // Desktop Scenario
     let source_tb = 1.0;
-    let compressed_gb = source_tb * 1024.0 * avg_ratio;
+    let compressed_gb_desktop = source_tb * 1024.0 * overall_ratio;
     let thumbs_gb = source_tb * 1024.0 * thumb_ratio;
+    
+    // Mobile Scenario (AV not compressed)
+    // Assume library distribution matches fixture distribution
+    let av_fraction = total_av_orig as f64 / total_orig as f64;
+    let img_fraction = total_img_orig as f64 / total_orig as f64;
+    
+    // Mobile Compressed Size = (1TB * img_fraction * img_ratio) + (1TB * av_fraction * 1.0)
+    let compressed_gb_mobile = (source_tb * 1024.0 * img_fraction * img_ratio) + (source_tb * 1024.0 * av_fraction);
 
-    report.push_str("### Storage Requirements\n");
-    report.push_str(&format!("- **Original Source**: 1 TB\n"));
-    report.push_str(&format!(
-        "- **Compressed Originals**: {:.2} GB\n",
-        compressed_gb
-    ));
-    report.push_str(&format!("- **Thumbnails**: {:.2} GB\n\n", thumbs_gb));
+    report.push_str("### Storage Requirements (1 TB source)\n");
+    report.push_str("| Strategy | Compressed Size | Thumbnails | Total Stored |\n");
+    report.push_str("|---|---|---|---|\n");
+    report.push_str(&format!("| **Desktop (Full Compression)** | {:.2} GB | {:.2} GB | {:.2} GB |\n", compressed_gb_desktop, thumbs_gb, compressed_gb_desktop + thumbs_gb));
+    report.push_str(&format!("| **Mobile (Image Only)** | {:.2} GB | {:.2} GB | {:.2} GB |\n\n", compressed_gb_mobile, thumbs_gb, compressed_gb_mobile + thumbs_gb));
 
     // Calculate Costs
-    let da_cost = (compressed_gb * COST_GLACIER_DEEP) + (thumbs_gb * COST_S3_STANDARD);
-    let ir_cost = (compressed_gb * COST_S3_INSTANT) + (thumbs_gb * COST_S3_STANDARD); // IR is costlier storage class
-
-    // Wait, Instant Retrieval pricing:
-    // S3 Standard-IA is roughly $0.0125, S3 One Zone-IA $0.01
-    // Glacier Instant Retrieval is $0.004/GB ($4/TB) as per docs
-    // Docs say: Start with cost from docs ($4.00/TB) which is accurate for IR class.
+    let da_cost_desktop = (compressed_gb_desktop * COST_GLACIER_DEEP) + (thumbs_gb * COST_S3_STANDARD);
+    let ir_cost_desktop = (compressed_gb_desktop * COST_S3_INSTANT) + (thumbs_gb * COST_S3_STANDARD);
+    
+    let da_cost_mobile = (compressed_gb_mobile * COST_GLACIER_DEEP) + (thumbs_gb * COST_S3_STANDARD);
+    let ir_cost_mobile = (compressed_gb_mobile * COST_S3_INSTANT) + (thumbs_gb * COST_S3_STANDARD);
 
     report.push_str("### Monthly Cost Estimate\n\n");
-    report.push_str("| Storage Strategy | Cost/Month (Est) | Notes |\n");
-    report.push_str("|---|---|---|\n");
-    report.push_str(&format!("| **Deep Archive** | **${:.2}** | Originals in Glacier DA ($0.99/TB), Thumbs in Standard |\n", da_cost));
-    report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | Originals in Glacier IR ($4.00/TB), Thumbs in Standard |\n", ir_cost));
+    report.push_str("| Storage Class | Desktop Cost | Mobile Cost | Notes |\n");
+    report.push_str("|---|---|---|---|\n");
+    report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals in DA ($0.99/TB), Thumbs in Std |\n", da_cost_desktop, da_cost_mobile));
+    report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals in IR ($4.00/TB), Thumbs in Std |\n", ir_cost_desktop, ir_cost_mobile));
 
-    report.push_str("\n> Note: Instant Retrieval allows millisecond access to all photos, while Deep Archive requires 12-48h restore time.\n");
-
+    report.push_str("\n> Note: Mobile clients upload Video/Audio originals uncompressed to save battery/heat, but still compress Images.\n");
     report
 }
 
@@ -225,4 +246,61 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+/// Simulation of Frontend Frame Extraction
+/// Uses ffmpeg to extract 6 frames evenly spaced
+fn extract_simulation_frames(path: &Path) -> Result<Vec<Vec<u8>>> {
+    log::info!("Simulating frontend frame extraction for {:?}", path);
+    // 1. Get Duration
+    let output = std::process::Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    // Parse Duration: 00:00:00.00
+    let duration_line = stderr.lines().find(|l| l.trim().starts_with("Duration:")).unwrap_or("");
+    let duration_str = duration_line.split(',').next().unwrap_or("").replace("Duration: ", "").trim().to_string();
+    
+    let parts: Vec<&str> = duration_str.split(':').collect();
+    let mut duration_sec = 0.0;
+    if parts.len() == 3 { // HH:MM:SS.mm
+       let h: f64 = parts[0].parse().unwrap_or(0.0);
+       let m: f64 = parts[1].parse().unwrap_or(0.0);
+       let s: f64 = parts[2].parse().unwrap_or(0.0);
+       duration_sec = h * 3600.0 + m * 60.0 + s;
+    }
+
+    if duration_sec <= 0.0 {
+        // Fallback for very short or unparsable videos
+        duration_sec = 1.0; 
+    }
+
+    // 2. Extract 6 frames
+    let count = 6;
+    let interval = duration_sec / count as f64;
+    let mut frames = Vec::new();
+
+    for i in 0..count {
+        let timestamp = interval * i as f64;
+        let output = std::process::Command::new("ffmpeg")
+            .args(&[
+                "-ss", &format!("{:.3}", timestamp),
+                "-i", path.to_str().unwrap(),
+                "-vframes", "1",
+                "-f", "image2",
+                "-c:v", "mjpeg", // Export as JPEG like frontend
+                "-pipe:1"
+            ])
+            .output()?;
+        
+        if output.status.success() {
+             frames.push(output.stdout);
+        } else {
+             log::warn!("Failed to extract frame at {}s", timestamp);
+        }
+    }
+
+    Ok(frames)
 }

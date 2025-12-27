@@ -3,6 +3,21 @@ mod crypto;
 mod db;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod embedding;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+mod embedding {
+    #[derive(Clone)]
+    pub struct EmbeddingState;
+
+    impl EmbeddingState {
+        pub fn new(_: std::path::PathBuf) -> Self {
+            Self
+        }
+        pub fn inner(&self) -> &Self {
+            self
+        }
+    }
+}
 mod exif_extractor;
 mod file_filter;
 
@@ -111,7 +126,6 @@ async fn load_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     embedding_state: State<'_, embedding::EmbeddingState>,
     id: String,
 ) -> Result<(), String> {
@@ -359,7 +373,6 @@ async fn import_vault_step2_load(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_id: String,
 ) -> Result<(), String> {
@@ -371,7 +384,7 @@ async fn import_vault_step2_load(
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        load_vault(app, state, cache_state, vault_id)
+        load_vault(app, state, cache_state, embedding_state, vault_id)
             .await
             .map_err(|e| format!("Failed to activate vault: {}", e))
     }
@@ -392,7 +405,6 @@ async fn import_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
@@ -441,7 +453,7 @@ async fn import_vault(
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        load_vault(app, state.clone(), cache_state, id)
+        load_vault(app, state.clone(), cache_state, embedding_state, id)
             .await
             .map_err(|e| {
                 log::info!("[Import] FAILED to activate vault: {}", e);
@@ -645,7 +657,6 @@ async fn bootstrap_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
@@ -692,7 +703,7 @@ async fn bootstrap_vault(
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        load_vault(app, state, cache_state, id).await
+        load_vault(app, state, cache_state, embedding_state, id).await
     }
 }
 
@@ -2241,12 +2252,10 @@ async fn embed_all_photos_internal(
     let mut embedded_count = 0;
     let mut skipped_count = 0;
     let mut no_cache_count = 0;
-    let mut audio_count = 0;
     
     for (photo_id, media_type) in photos {
         // Skip audio files - they have no thumbnails to embed
         if media_type == "audio" {
-            audio_count += 1;
             continue;
         }
         
@@ -2333,7 +2342,6 @@ async fn embed_all_photos(
     let mut embedded_count = 0;
     let mut skipped_count = 0;
     let mut no_cache_count = 0;
-    let mut audio_count = 0;
     
     for (vault_id, _) in vault_ids {
         let vault_dir = app_dir.join("vaults").join(&vault_id);
@@ -2364,7 +2372,6 @@ async fn embed_all_photos(
         for (photo_id, media_type) in photos {
             // Skip audio files - they have no thumbnails to embed
             if media_type == "audio" {
-                audio_count += 1;
                 continue;
             }
             
@@ -2435,9 +2442,8 @@ async fn embed_all_photos(
             }
         }
     }
-    
-    log::info!("Batch embedding complete: {} embedded, {} skipped (already done), {} audio (no thumbnail), {} not in cache", 
-               embedded_count, skipped_count, audio_count, no_cache_count);
+    log::info!("Batch embedding complete: {} embedded, {} skipped (already done), {} not in cache",
+               embedded_count, skipped_count, no_cache_count);
     Ok(embedded_count)
 }
 
@@ -2605,13 +2611,78 @@ pub fn run() {
             get_thumbnail_for_vault,
             update_photo_metadata,
             // Embedding / Semantic Search commands (desktop only)
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             get_embedding_status,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             get_embedding_count,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             init_embedding_models,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             search_photos_semantic,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             embed_photo_for_search,
-            embed_all_photos
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            embed_all_photos,
+            // Cross-platform embedding persistence
+            save_embedding,
+            load_embeddings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ============================================================================
+// Embedding Persistence Commands (Cross-Platform)
+// ============================================================================
+
+// ============================================================================
+// Embedding Persistence Commands (Cross-Platform)
+// ============================================================================
+
+#[tauri::command]
+async fn save_embedding(
+    app: AppHandle,
+    photo_id: String,
+    vault_id: String,
+    embedding: Vec<f32>,
+) -> Result<(), String> {
+    // Open vault DB directly to avoid reliance on 'active vault' state which might not be ready
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = app_dir.join("vaults").join(&vault_id).join("manifest.db");
+    
+    if !db_path.exists() {
+        return Err(format!("Vault DB not found for {}", vault_id));
+    }
+
+    let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+
+    db::save_embedding(&conn, &photo_id, &embedding).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn load_embeddings(
+    app: AppHandle,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    // Load embeddings from ALL vaults (similar to get_all_photos)
+    let vault_ids = store::get_vault_ids(&app)?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut all_embeddings = Vec::new();
+
+    for (vault_id, _bucket) in vault_ids {
+        let db_path = app_dir.join("vaults").join(&vault_id).join("manifest.db");
+
+        if !db_path.exists() {
+            continue;
+        }
+
+        if let Ok(conn) = db::init_db(&db_path) {
+            // Load embeddings involves reading blobs, so we use the helper
+            // Note: Since photo_id is unique across vaults (UUID), we can flatten the list
+            if let Ok(vault_embeddings) = db::load_embeddings(&conn) {
+                all_embeddings.extend(vault_embeddings);
+            }
+        }
+    }
+    
+    Ok(all_embeddings)
 }

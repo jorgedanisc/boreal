@@ -12,8 +12,7 @@
     "android:dev": "./scripts/android-env.sh bun tauri android dev",
     "android:build": "./scripts/android-env.sh bun tauri android build --target aarch64",
     "fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs --version latest --targets x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu,aarch64-apple-darwin,x86_64-apple-darwin,universal-apple-darwin,aarch64-unknown-linux-gnu,aarch64-pc-windows-msvc",
-    "fetch:models": "node scripts/fetch-models.mjs",
-    "tauri:build": "npm run fetch:ffmpeg && npm run fetch:models && tauri build",
+    "tauri:build": "npm run fetch:ffmpeg && tauri build",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -63,7 +62,8 @@
     "tw-animate-css": "^1.4.0",
     "usehooks-ts": "^3.1.1",
     "vaul": "^1.1.2",
-    "zustand": "^5.0.9"
+    "zustand": "^5.0.9",
+    "onnxruntime-web": "1.20.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

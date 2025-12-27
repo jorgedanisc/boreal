@@ -52,7 +52,7 @@ export function ImportStep({ onBack, onComplete }: ImportStepProps) {
   return (
     <div className={cn(
       "bg-background flex flex-col",
-      isDesktop ? "pt-8" : "pt-0",
+      isDesktop ? "pt-8" : "pt-safe",
     )}>
       {/* Header */}
       <header className="p-4 flex items-center gap-2">

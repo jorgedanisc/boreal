@@ -1,5 +1,6 @@
 use rusqlite::{Connection, Result};
 use std::path::Path;
+use chrono;
 
 pub fn init_db(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -111,4 +112,48 @@ pub fn get_metadata(conn: &Connection, key: &str) -> Result<Option<String>> {
     } else {
         Ok(None)
     }
+}
+
+pub fn save_embedding(conn: &Connection, photo_id: &str, embedding: &[f32]) -> Result<()> {
+    // Convert f32 vector to bytes (u8)
+    let bytes: Vec<u8> = embedding
+        .iter()
+        .flat_map(|f| f.to_le_bytes())
+        .collect();
+
+    let created_at = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT OR REPLACE INTO embeddings (photo_id, embedding, created_at) VALUES (?1, ?2, ?3)",
+        (photo_id, bytes, created_at),
+    )?;
+
+    Ok(())
+}
+
+pub fn load_embeddings(conn: &Connection) -> Result<Vec<(String, Vec<f32>)>> {
+    let mut stmt = conn.prepare("SELECT photo_id, embedding FROM embeddings")?;
+    
+    let rows = stmt.query_map([], |row| {
+        let photo_id: String = row.get(0)?;
+        let bytes: Vec<u8> = row.get(1)?;
+        
+        // Convert bytes back to f32
+        let embedding: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|chunk| {
+                let bytes: [u8; 4] = chunk.try_into().unwrap();
+                f32::from_le_bytes(bytes)
+            })
+            .collect();
+            
+        Ok((photo_id, embedding))
+    })?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row?);
+    }
+    
+    Ok(results)
 }

@@ -22,6 +22,10 @@ ffmpeg -f lavfi -i "nullsrc=s=1280x720,geq=random(1)*255:128:128" -frames:v 1 -y
 # Text overlay
 ffmpeg -f lavfi -i "color=000000:1080x720:d=1,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='Benchmark':fontsize=64:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2" -frames:v 1 -y "$OUTPUT_DIR/img_04_text.jpg" 2>/dev/null || \
 ffmpeg -f lavfi -i "color=000000:1080x720:d=1" -frames:v 1 -y "$OUTPUT_DIR/img_04_black.jpg" 
+# BMP Image (Uncompressed)
+ffmpeg -f lavfi -i testsrc=size=640x480:rate=1 -frames:v 1 -y "$OUTPUT_DIR/img_05_test.bmp"
+# TIFF Image
+ffmpeg -f lavfi -i "mandelbrot=size=800x600" -frames:v 1 -pix_fmt rgb24 -compression_algo lzw -y "$OUTPUT_DIR/img_06_fractal.tiff"
 
 # Additional Images for volume
 for i in {05..10}; do
@@ -40,6 +44,12 @@ ffmpeg -f lavfi -i yuvtestsrc=duration=3:size=640x480 -c:v libvpx -b:v 1M -y "$O
 # Noisy video
 ffmpeg -f lavfi -i "life=s=320x240:mold=10:r=30:ratio=0.1:death_color=#C83232:life_color=#00ff00,scale=1280:720" -t 5 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/vid_04_noise.mp4"
 
+# Vertical Video (9:16) - Common on Mobile
+ffmpeg -f lavfi -i testsrc=duration=3:size=720x1280:rate=30 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/vid_05_vertical_9_16.mp4"
+
+# Square Video (1:1)
+ffmpeg -f lavfi -i "mandelbrot=size=720x720:rate=30" -t 3 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/vid_06_square_1_1.mp4"
+
 # Additional Videos
 for i in {05..10}; do
     ffmpeg -f lavfi -i testsrc=duration=2:size=800x600:rate=24 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/vid_${i}_short.mp4"
@@ -50,6 +60,8 @@ done
 ffmpeg -f lavfi -i "sine=frequency=440:duration=5" -c:a libvorbis -y "$OUTPUT_DIR/aud_01_sine.ogg"
 # White Noise (WAV) -- wav is not compressed, good baseline
 ffmpeg -f lavfi -i "anoisesrc=d=5:c=pink:r=44100:a=0.5" -y "$OUTPUT_DIR/aud_02_pink_noise.wav"
+# FLAC (Lossless)
+ffmpeg -f lavfi -i "sine=frequency=880:duration=5" -c:a flac -y "$OUTPUT_DIR/aud_03_sine.flac"
 # Mixed tones (MP3 if avail, else OGG)
 ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" -c:a libmp3lame -q:a 2 -y "$OUTPUT_DIR/aud_03_sine_1khz.mp3" 2>/dev/null || \
 ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" -c:a libvorbis -q:a 5 -y "$OUTPUT_DIR/aud_03_sine_1khz.ogg"

@@ -26,15 +26,13 @@ impl EmbeddingIndex {
         self.embeddings.insert(id, embedding);
     }
 
-    /// Remove an embedding
-    pub fn remove(&mut self, id: &str) -> bool {
-        self.embeddings.remove(id).is_some()
-    }
-
     /// Check if ID exists
     pub fn contains(&self, id: &str) -> bool {
         self.embeddings.contains_key(id)
     }
+
+
+
 
     /// Search for top-k similar items
     /// Uses dot product (equivalent to cosine similarity for L2-normalized vectors)
@@ -63,21 +61,6 @@ impl EmbeddingIndex {
     /// Get number of indexed items
     pub fn len(&self) -> usize {
         self.embeddings.len()
-    }
-
-    /// Check if index is empty
-    pub fn is_empty(&self) -> bool {
-        self.embeddings.is_empty()
-    }
-
-    /// Clear all embeddings
-    pub fn clear(&mut self) {
-        self.embeddings.clear();
-    }
-
-    /// Get all indexed IDs
-    pub fn ids(&self) -> Vec<String> {
-        self.embeddings.keys().cloned().collect()
     }
 }
 

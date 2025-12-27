@@ -64,48 +64,64 @@ pub struct TauriTranscoder {
 #[async_trait::async_trait]
 impl Transcoder for TauriTranscoder {
     async fn run_ffmpeg(&self, args: &[String]) -> Result<Vec<u8>> {
-        use tauri_plugin_shell::ShellExt;
-
-        log::info!("Executing Sidecar FFmpeg command with args: {:?}", args);
-
-        let output_path = args.last().unwrap();
-
-        let output_result = self
-            .app
-            .shell()
-            .sidecar("ffmpeg")
-            .map_err(|e| anyhow::anyhow!("Failed to create sidecar command: {}", e))?
-            .args(args)
-            .output()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to execute sidecar: {}", e))?;
-
-        if !output_result.status.success() {
-            let stderr = String::from_utf8_lossy(&output_result.stderr);
-            log::info!("FFmpeg Sidecar stderr: {}", stderr);
-            return Err(anyhow::anyhow!("FFmpeg transcode failed: {}", stderr));
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            return Err(anyhow::anyhow!("FFmpeg sidecar is not available on mobile."));
         }
 
-        std::fs::read(output_path).context("Failed to read transcoded file")
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            use tauri_plugin_shell::ShellExt;
+
+            log::info!("Executing Sidecar FFmpeg command with args: {:?}", args);
+
+            let output_path = args.last().unwrap();
+
+            let output_result = self
+                .app
+                .shell()
+                .sidecar("ffmpeg")
+                .map_err(|e| anyhow::anyhow!("Failed to create sidecar command: {}", e))?
+                .args(args)
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to execute sidecar: {}", e))?;
+
+            if !output_result.status.success() {
+                let stderr = String::from_utf8_lossy(&output_result.stderr);
+                log::info!("FFmpeg Sidecar stderr: {}", stderr);
+                return Err(anyhow::anyhow!("FFmpeg transcode failed: {}", stderr));
+            }
+
+            std::fs::read(output_path).context("Failed to read transcoded file")
+        }
     }
 
     async fn get_video_metadata(&self, path: &Path) -> Result<VideoMetadata> {
-        use tauri_plugin_shell::ShellExt;
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            return Err(anyhow::anyhow!("FFmpeg sidecar is not available on mobile."));
+        }
 
-        // Run ffmpeg -i input
-        let output_result = self
-            .app
-            .shell()
-            .sidecar("ffmpeg")
-            .map_err(|e| anyhow::anyhow!("Failed to create sidecar command: {}", e))?
-            .args(&["-i", path.to_str().unwrap()])
-            .output()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to execute sidecar: {}", e))?;
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            use tauri_plugin_shell::ShellExt;
 
-        // Expect failure (exit code 1) but capture stderr
-        let stderr = String::from_utf8_lossy(&output_result.stderr);
-        parse_ffmpeg_stderr(&stderr)
+            // Run ffmpeg -i input
+            let output_result = self
+                .app
+                .shell()
+                .sidecar("ffmpeg")
+                .map_err(|e| anyhow::anyhow!("Failed to create sidecar command: {}", e))?
+                .args(&["-i", path.to_str().unwrap()])
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to execute sidecar: {}", e))?;
+
+            // Expect failure (exit code 1) but capture stderr
+            let stderr = String::from_utf8_lossy(&output_result.stderr);
+            parse_ffmpeg_stderr(&stderr)
+        }
     }
 }
 

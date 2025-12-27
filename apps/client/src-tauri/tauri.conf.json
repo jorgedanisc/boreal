@@ -33,15 +33,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/ffmpeg",
-      "binaries/ffprobe"
-    ],
-    "resources": [
-      "models/nomic-embed-vision-v1.5/model.onnx",
-      "models/nomic-embed-text-v1.5/model.onnx",
-      "models/nomic-embed-text-v1.5/tokenizer.json"
     ]
   },
   "plugins": {

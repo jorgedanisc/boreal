@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-sidecars",
+  "description": "Sidecar permissions for desktop",
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "permissions": [
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/ffmpeg",
+          "cmd": "ffmpeg",
+          "sidecar": true
+        },
+        {
+          "name": "binaries/ffprobe",
+          "cmd": "ffprobe",
+          "sidecar": true
+        }
+      ]
+    }
+  ]
+}

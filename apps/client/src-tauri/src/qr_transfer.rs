@@ -103,27 +103,7 @@ impl ReceiverSession {
         }
     }
 
-    /// Reset the session for a new import attempt
-    pub fn reset(&mut self) {
-        log::info!("[Receiver] Resetting session state");
-        self.decoder = ur::Decoder::default();
-        self.shared_secret = None;
-        self.sender_public = None;
-        self.decrypted_vault = None;
-        self.frames_received = 0;
-        self.expected_parts = None;
 
-        // Regenerate new ephemeral keys for a fresh session
-        let mut secret_bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut secret_bytes);
-        self.secret = StaticSecret::from(secret_bytes);
-        self.public_key = PublicKey::from(&self.secret);
-
-        // Regenerate session ID
-        let mut session_id_bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut session_id_bytes);
-        self.session_id = hex::encode(&session_id_bytes);
-    }
 
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
@@ -329,6 +309,7 @@ impl ReceiverSession {
 /// Session state for the sender (old device)
 /// Pre-computes all QR frames at creation to avoid lifetime issues and memory leaks.
 pub struct SenderSession {
+    #[allow(dead_code)]
     pub session_id: String,
     #[allow(dead_code)]
     receiver_public: PublicKey,
