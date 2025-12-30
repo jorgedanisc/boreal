@@ -5,8 +5,7 @@
 pub mod download;
 pub mod preprocess;
 pub mod search;
-pub mod text;
-pub mod vision;
+
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,8 +13,27 @@ use tokio::sync::Mutex;
 
 pub use download::{get_model_paths, models_exist};
 pub use search::EmbeddingIndex;
-pub use text::TextEmbedder;
-pub use vision::VisionEmbedder;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod text_desktop;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod vision_desktop;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod text_mobile;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod vision_mobile;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub use text_desktop::TextEmbedder;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub use vision_desktop::VisionEmbedder;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub use text_mobile::TextEmbedder;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub use vision_mobile::VisionEmbedder;
+
 
 /// Managed state for embedding models
 #[derive(Clone)]

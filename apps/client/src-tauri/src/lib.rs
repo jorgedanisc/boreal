@@ -1,23 +1,7 @@
 mod cache;
 mod crypto;
 mod db;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod embedding;
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-mod embedding {
-    #[derive(Clone)]
-    pub struct EmbeddingState;
-
-    impl EmbeddingState {
-        pub fn new(_: std::path::PathBuf) -> Self {
-            Self
-        }
-        pub fn inner(&self) -> &Self {
-            self
-        }
-    }
-}
 mod exif_extractor;
 mod file_filter;
 
@@ -28,6 +12,7 @@ mod pairing;
 mod qr_transfer;
 mod storage;
 mod upload_manager;
+mod tray_manager;
 mod vault;
 
 use crate::cache::ThumbnailCache;
@@ -38,7 +23,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 struct AppState {
@@ -61,6 +46,10 @@ struct PairingManagerState {
 
 struct QrTransferManagerState {
     manager: Arc<qr_transfer::QrTransferManager>,
+}
+
+struct TrayManagerState {
+    manager: Arc<tokio::sync::RwLock<tray_manager::TrayManager>>,
 }
 
 // Commands
@@ -199,7 +188,6 @@ async fn load_vault(
     let config_clone = state.config.lock().await.clone();
     let app_dir_clone = app_dir.clone();
     
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let embedding_state_clone = embedding_state.inner().clone();
 
     tokio::spawn(async move {
@@ -214,8 +202,7 @@ async fn load_vault(
                         log::info!("[Manifest Sync] Background upload failed: {}", e);
                     }
                     
-                    // 3. Embed cached photos (desktop only)
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    // 3. Embed cached photos
                     {
                         let result = embed_all_photos_internal(
                             &app_dir_clone,
@@ -376,18 +363,9 @@ async fn import_vault_step2_load(
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_id: String,
 ) -> Result<(), String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        load_vault(app, state, cache_state, embedding_state, vault_id)
-            .await
-            .map_err(|e| format!("Failed to activate vault: {}", e))
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        load_vault(app, state, cache_state, embedding_state, vault_id)
-            .await
-            .map_err(|e| format!("Failed to activate vault: {}", e))
-    }
+    load_vault(app, state, cache_state, embedding_state, vault_id)
+        .await
+        .map_err(|e| format!("Failed to activate vault: {}", e))
 }
 
 /// Step 3: Sync manifest from S3 (STRICT - fails if no manifest)
@@ -442,24 +420,12 @@ async fn import_vault(
 
     // Activate vault (loads DB, sets up storage)
     log::info!("[Import] Activating vault (load_vault)...");
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        load_vault(app, state.clone(), cache_state, embedding_state, id)
-            .await
-            .map_err(|e| {
-                log::info!("[Import] FAILED to activate vault: {}", e);
-                format!("Failed to activate vault: {}", e)
-            })?;
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        load_vault(app, state.clone(), cache_state, embedding_state, id)
-            .await
-            .map_err(|e| {
-                log::info!("[Import] FAILED to activate vault: {}", e);
-                format!("Failed to activate vault: {}", e)
-            })?;
-    }
+    load_vault(app, state.clone(), cache_state, embedding_state, id)
+        .await
+        .map_err(|e| {
+            log::info!("[Import] FAILED to activate vault: {}", e);
+            format!("Failed to activate vault: {}", e)
+        })?;
     log::info!("[Import] Vault activated successfully.");
 
     // STRICT SYNC: For imported vaults, manifest MUST exist on S3
@@ -697,14 +663,7 @@ async fn bootstrap_vault(
     store::save_vault(&app, &config)?;
 
     // 6. Activate
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        load_vault(app, state, cache_state, embedding_state, id).await
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        load_vault(app, state, cache_state, embedding_state, id).await
-    }
+    load_vault(app, state, cache_state, embedding_state, id).await
 }
 
 #[tauri::command]
@@ -1931,7 +1890,6 @@ async fn cancel_qr_import(qr_state: State<'_, QrTransferManagerState>) -> Result
 // === Embedding / Semantic Search commands (desktop only) ===
 // Models are bundled with the app - no download needed
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(serde::Serialize)]
 struct EmbeddingModelsStatus {
     available: bool,
@@ -1939,18 +1897,14 @@ struct EmbeddingModelsStatus {
     indexed_count: usize,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn get_embedding_status(
     app: AppHandle,
     embedding_state: State<'_, embedding::EmbeddingState>,
 ) -> Result<EmbeddingModelsStatus, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    let available = embedding::models_exist(&resource_dir);
+    let available = embedding::models_exist(&app_dir);
     let ready = embedding_state.is_ready().await;
     let index = embedding_state.index.lock().await;
 
@@ -1961,7 +1915,6 @@ async fn get_embedding_status(
     })
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn init_embedding_models(
     app: AppHandle,
@@ -1972,17 +1925,14 @@ async fn init_embedding_models(
         return Ok(());
     }
 
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
-    // Check if bundled models are available
-    if !embedding::models_exist(&resource_dir) {
-        return Err("Embedding models not bundled. Please rebuild the application.".to_string());
+    // Check if downloaded models are available
+    if !embedding::models_exist(&app_dir) {
+        return Err("Embedding models not found. Please download them first.".to_string());
     }
 
-    let (vision_path, text_path, tokenizer_path) = embedding::get_model_paths(&resource_dir);
+    let (vision_path, text_path, tokenizer_path) = embedding::get_model_paths(&app_dir);
 
     log::info!("Loading vision embedding model from {:?}", vision_path);
     log::info!("Loading text embedding model from {:?}", text_path);
@@ -2048,14 +1998,12 @@ async fn init_embedding_models(
     Ok(())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(serde::Serialize)]
 struct SemanticSearchResult {
     id: String,
     score: f32,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn search_photos_semantic(
     embedding_state: State<'_, embedding::EmbeddingState>,
@@ -2100,7 +2048,6 @@ async fn search_photos_semantic(
     Ok(filtered)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn get_embedding_count(
     embedding_state: State<'_, embedding::EmbeddingState>,
@@ -2109,7 +2056,6 @@ async fn get_embedding_count(
     Ok(index.len())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn embed_photo_for_search(
     _app: AppHandle,
@@ -2222,7 +2168,6 @@ async fn embed_photo_for_search(
 
 /// Internal helper for embedding photos from a single vault
 /// Returns (embedded_count, skipped_count, no_cache_count)
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn embed_all_photos_internal(
     app_dir: &std::path::Path,
     vault_id: &str,
@@ -2328,7 +2273,6 @@ async fn embed_all_photos_internal(
 
 /// Embed all photos in all vaults (background task)
 /// Scans the disk cache directory for cached thumbnails
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 async fn embed_all_photos(
     app: AppHandle,
@@ -2463,6 +2407,28 @@ pub fn run() {
                 app.emit("menu:open_cache_folder", ()).ok();
             }
         });
+        
+        // Prevent app from quitting when window is closed during uploads
+        builder = builder.on_window_event(|window, event| {
+            use tauri::Manager;
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Check if uploads are in progress
+                let app = window.app_handle();
+                if let Some(tray_state) = app.try_state::<TrayManagerState>() {
+                    // Use blocking read since we're in sync context
+                    let tray_manager = tray_state.manager.blocking_read();
+                    let state = tray_manager.state();
+                    let upload_state = state.blocking_read();
+                    
+                    if upload_state.is_processing {
+                        // Hide window instead of closing to keep uploads running
+                        api.prevent_close();
+                        let _ = window.hide();
+                        log::info!("[Tray] Window hidden, uploads continuing in background");
+                    }
+                }
+            }
+        });
     }
 
     builder
@@ -2487,6 +2453,13 @@ pub fn run() {
                 // Create the menu bar
                 let menu = Menu::with_items(app, &[&developer_menu])?;
                 app.set_menu(menu)?;
+
+                // Initialize system tray for upload progress
+                let tray_state = app.state::<TrayManagerState>();
+                let mut tray_manager = tray_state.manager.blocking_write();
+                if let Err(e) = tray_manager.init(app.handle()) {
+                    log::warn!("[Tray] Failed to initialize system tray: {}", e);
+                }
             }
 
             Ok(())
@@ -2542,6 +2515,10 @@ pub fn run() {
         })
         // Embedding state (desktop only, but we manage an empty placeholder for mobile)
         .manage(embedding::EmbeddingState::new(std::path::PathBuf::new()))
+        // System tray manager state (desktop only)
+        .manage(TrayManagerState {
+            manager: Arc::new(tokio::sync::RwLock::new(tray_manager::TrayManager::new())),
+        })
         .invoke_handler(tauri::generate_handler![
             import_vault,
             import_vault_step1_save,
@@ -2610,25 +2587,104 @@ pub fn run() {
             get_all_photos_with_geolocation,
             get_thumbnail_for_vault,
             update_photo_metadata,
-            // Embedding / Semantic Search commands (desktop only)
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            // Embedding / Semantic Search commands
             get_embedding_status,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             get_embedding_count,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             init_embedding_models,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             search_photos_semantic,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             embed_photo_for_search,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             embed_all_photos,
             // Cross-platform embedding persistence
             save_embedding,
-            load_embeddings
+            load_embeddings,
+            // Debugging
+            debug_log,
+            download_file,
+            get_app_data_path,
+            embedding::download::download_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+async fn debug_log(message: String, level: Option<String>) {
+    match level.as_deref() {
+        Some("error") => log::error!("[Frontend] {}", message),
+        Some("warn") => log::warn!("[Frontend] {}", message),
+        _ => log::info!("[Frontend] {}", message),
+    }
+}
+
+#[tauri::command]
+async fn get_app_data_path(app: AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn download_file(
+    app: AppHandle,
+    url: String,
+    filename: String,
+) -> Result<String, String> {
+    use std::io::Write;
+    use tauri::Manager;
+    use futures_util::StreamExt; // Start using streaming for progress
+
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let models_dir = app_dir.join("models");
+    
+    if !models_dir.exists() {
+        std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+    }
+
+    let file_path = models_dir.join(&filename);
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    log::info!("[Download] Starting download of {} to {}", url, file_path_str);
+
+    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let mut stream = response.bytes_stream();
+    let mut file = std::fs::File::create(&file_path).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+
+        if total_size > 0 {
+            // Emit progress event
+            // Note: Emitting too frequently might cause bridge congestion, but for ~3 files it's fine.
+            // Limiting to 1% increments would be better but let's try raw first or check if we can throttle.
+            // For simplicity, we just emit.
+             let _ = app.emit("download_progress", Payload {
+                filename: filename.clone(),
+                downloaded,
+                total: total_size,
+            });
+        }
+    }
+
+    log::info!("[Download] Successfully saved to {}", file_path_str);
+    
+    Ok(file_path_str)
+}
+
+#[derive(Clone, serde::Serialize)]
+struct Payload {
+    filename: String,
+    downloaded: u64,
+    total: u64,
 }
 
 // ============================================================================

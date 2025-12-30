@@ -25,6 +25,9 @@ const FRESH_UPLOAD_SIZE_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20GB
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_RETRY_DELAY_MS: u64 = 1000;
 
+/// Maximum number of concurrent uploads (for parallel processing)
+const MAX_CONCURRENT_UPLOADS: usize = 4;
+
 struct PreparedUpload {
     original_key: String,
     thumbnail_key: Option<String>,
@@ -365,8 +368,10 @@ impl UploadManager {
         }
     }
 
-    /// Start processing the upload queue in the background
+    /// Start processing the upload queue in the background (parallel with concurrency limit)
     pub async fn start_processing(&self) -> Result<()> {
+        use tokio::sync::Semaphore;
+        
         // Check if already processing
         {
             let is_processing = self.is_processing.read().await;
@@ -389,9 +394,19 @@ impl UploadManager {
         let app_handle = self.app_handle.clone();
         let is_processing = Arc::clone(&self.is_processing);
 
-        // Spawn background processing task
+        // Spawn background processing coordinator
         tokio::spawn(async move {
+            // Semaphore to limit concurrent uploads
+            let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOADS));
+            let mut active_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
             loop {
+                // Wait for a semaphore permit before finding next item
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => break, // Semaphore closed
+                };
+
                 // Find the next pending item
                 let next_item: Option<UploadItem> = {
                     let queue_guard = queue.read().await;
@@ -410,34 +425,59 @@ impl UploadManager {
 
                 match next_item {
                     Some(item) => {
-                        // Process this item with retry logic
-                        let result = Self::process_item_with_retry(
-                            &queue,
-                            &cancelled_ids,
-                            &storage,
-                            &config,
-                            &db,
-                            &thumbnail_cache,
-                            &app_handle,
-                            item,
-                        )
-                        .await;
+                        // Clone shared state for this task
+                        let queue_clone = Arc::clone(&queue);
+                        let cancelled_clone = Arc::clone(&cancelled_ids);
+                        let storage_clone = Arc::clone(&storage);
+                        let config_clone = Arc::clone(&config);
+                        let db_clone = Arc::clone(&db);
+                        let cache_clone = Arc::clone(&thumbnail_cache);
+                        let app_clone = app_handle.clone();
 
-                        if let Err(e) = result {
-                            // Already handled in process_item_with_retry
-                            // Print debug representation to see error chain
-                            log::info!("Upload failed: {:?}", e);
-                        }
+                        // Spawn parallel upload task
+                        let task = tokio::spawn(async move {
+                            let result = Self::process_item_with_retry(
+                                &queue_clone,
+                                &cancelled_clone,
+                                &storage_clone,
+                                &config_clone,
+                                &db_clone,
+                                &cache_clone,
+                                &app_clone,
+                                item,
+                            )
+                            .await;
+
+                            if let Err(e) = result {
+                                log::info!("Upload failed: {:?}", e);
+                            }
+
+                            // Release permit when done
+                            drop(permit);
+                        });
+
+                        active_tasks.push(task);
                     }
                     None => {
-                        // No more pending items
+                        // No more pending items, release permit and break
+                        drop(permit);
                         break;
                     }
                 }
+
+                // Clean up completed tasks periodically
+                active_tasks.retain(|t| !t.is_finished());
+            }
+
+            // Wait for all active uploads to complete
+            for task in active_tasks {
+                let _ = task.await;
             }
 
             // Mark as not processing
             *is_processing.write().await = false;
+            
+            log::info!("[Upload] All uploads completed");
         });
 
         Ok(())
@@ -966,6 +1006,9 @@ impl UploadManager {
                 }),
             )
             .ok();
+            
+        // Sync tray
+        Self::sync_tray_static(queue, app_handle).await;
     }
 
     async fn update_progress_static(
@@ -996,6 +1039,9 @@ impl UploadManager {
                 }),
             )
             .ok();
+            
+        // Sync tray
+        Self::sync_tray_static(queue, app_handle).await;
     }
 
     async fn update_status(&self, id: &str, status: UploadStatus) {
@@ -1016,7 +1062,107 @@ impl UploadManager {
 
     async fn emit_queue_changed(&self) {
         let state = self.get_state().await;
+        
+        // Update system tray with overall progress
+        Self::update_tray_progress(&self.app_handle, &state).await;
+        
         self.app_handle.emit("upload:queue_changed", state).ok();
+    }
+
+    /// Update system tray with upload progress (called from emit_queue_changed and processing loop)
+    async fn update_tray_progress(app_handle: &AppHandle, state: &QueueState) {
+        use tauri::Manager;
+        
+        // Calculate overall progress
+        let total_size: u64 = state.items.iter().map(|i| i.size).sum();
+        let bytes_uploaded: u64 = state.items.iter().map(|i| i.bytes_uploaded).sum();
+        let progress = if total_size > 0 {
+            bytes_uploaded as f64 / total_size as f64
+        } else {
+            0.0
+        };
+        
+        // Check if uploads are active (processing)
+        let is_processing = state.items.iter().any(|i| {
+            matches!(
+                i.status,
+                UploadStatus::Processing
+                    | UploadStatus::EncryptingOriginal
+                    | UploadStatus::EncryptingThumbnail
+                    | UploadStatus::UploadingOriginal { .. }
+                    | UploadStatus::UploadingThumbnail { .. }
+            )
+        }) || state.pending_count > 0;
+        
+        // Check if there are completed items (for persistent tray icon)
+        let has_completed_items = state.completed_count > 0;
+        
+        Self::update_tray_internal(app_handle, is_processing, has_completed_items, progress, state.completed_count, state.items.len()).await;
+    }
+    
+    /// Static helper to sync tray state directly from queue lock
+    async fn sync_tray_static(queue: &Arc<RwLock<HashMap<String, UploadItem>>>, app_handle: &AppHandle) {
+        let (is_processing, has_completed_items, progress, completed_count, total_count) = {
+            let queue = queue.read().await;
+            let items: Vec<&UploadItem> = queue.values().collect();
+            
+            let total_size: u64 = items.iter().map(|i| i.size).sum();
+            let bytes_uploaded: u64 = items.iter().map(|i| i.bytes_uploaded).sum();
+            
+            let progress = if total_size > 0 {
+                bytes_uploaded as f64 / total_size as f64
+            } else {
+                0.0
+            };
+            
+            let completed_count = items.iter().filter(|i| matches!(i.status, UploadStatus::Completed)).count();
+            let pending_count = items.iter().filter(|i| matches!(i.status, UploadStatus::Pending)).count();
+             
+             let is_processing = items.iter().any(|i| {
+                matches!(
+                    i.status,
+                    UploadStatus::Processing
+                        | UploadStatus::EncryptingOriginal
+                        | UploadStatus::EncryptingThumbnail
+                        | UploadStatus::UploadingOriginal { .. }
+                        | UploadStatus::UploadingThumbnail { .. }
+                )
+            }) || pending_count > 0;
+            
+            let has_completed_items = completed_count > 0;
+            
+            (is_processing, has_completed_items, progress, completed_count, items.len())
+        };
+        
+        Self::update_tray_internal(app_handle, is_processing, has_completed_items, progress, completed_count, total_count).await;
+    }
+    
+    async fn update_tray_internal(
+        app_handle: &AppHandle, 
+        is_processing: bool,
+        has_completed_items: bool,
+        progress: f64, 
+        completed: usize, 
+        total: usize
+    ) {
+         use tauri::Manager;
+         // Try to update tray manager
+        if let Some(tray_state) = app_handle.try_state::<crate::TrayManagerState>() {
+            let tray_manager = tray_state.manager.read().await;
+            if let Err(e) = tray_manager
+                .update_state(
+                    is_processing,
+                    has_completed_items,
+                    progress,
+                    completed,
+                    total,
+                )
+                .await
+            {
+                // Warn but don't spam logs too much
+                // log::warn!("[Tray] Failed to update progress: {}", e);
+            }
+        }
     }
 }
 

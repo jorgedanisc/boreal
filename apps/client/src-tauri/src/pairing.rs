@@ -455,10 +455,10 @@ impl PairingManager {
             while let Ok(event) = receiver.recv() {
                 match event {
                     ServiceEvent::SearchStarted(service_type) => {
-                        log::debug!("[mDNS] Search started for: {}", service_type);
+                        log::info!("[mDNS] Search started for: {}", service_type);
                     }
                     ServiceEvent::ServiceFound(service_type, fullname) => {
-                        log::debug!(
+                        log::info!(
                             "[mDNS] Found service: {} (type: {})",
                             fullname,
                             service_type
@@ -487,7 +487,7 @@ impl PairingManager {
                                 last_seen: std::time::SystemTime::now(),
                             };
 
-                            log::debug!(
+                            log::info!(
                                 "[mDNS] Adding device: {} at {}:{}",
                                 device.name,
                                 device.ip,
@@ -713,7 +713,7 @@ impl PairingManager {
                 for target in &targets {
                     if let Err(e) = socket.send_to(msg.as_bytes(), target).await {
                         // Log at INFO level initially to debug
-                        log::debug!("[UDP] Beacon send to {} failed: {}", target, e);
+                        log::info!("[UDP] Beacon send to {} failed: {}", target, e);
                     }
                 }
 
@@ -770,7 +770,7 @@ impl PairingManager {
                 });
 
                 if devices.len() != before_count {
-                    log::debug!(
+                    log::info!(
                         "[Discovery] Pruned {} stale devices",
                         before_count - devices.len()
                     );
@@ -828,7 +828,7 @@ impl PairingManager {
                         }
                     }
                     Err(e) => {
-                        log::debug!("[UDP] Recv error: {}", e);
+                        log::info!("[UDP] Recv error: {}", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     }
                 }

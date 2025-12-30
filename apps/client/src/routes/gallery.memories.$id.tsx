@@ -69,7 +69,7 @@ function MemoryDetailsPage() {
       </header>
 
       {/* Mobile back button overlay */}
-      <div className="md:hidden fixed top-4 left-4 z-20">
+      <div className="md:hidden fixed top-0 left-0 z-20 pt-safe pl-4 mt-4">
         <Button
           variant="secondary"
           size="icon"
@@ -80,7 +80,7 @@ function MemoryDetailsPage() {
         </Button>
       </div>
 
-      <div className="max-w-2xl mx-auto pb-20 space-y-6 md:p-6 md:pt-0">
+      <div className="max-w-2xl mx-auto pb-20 space-y-6 md:p-6 md:pt-0 pt-safe">
         {/* Media Grid at Top (Scrollable for all items) */}
         <div className="md:rounded-3xl overflow-hidden">
           <BentoMediaGrid mediaIds={memory.media_ids} scrollable />

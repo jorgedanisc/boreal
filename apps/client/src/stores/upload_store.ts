@@ -481,11 +481,18 @@ export const useUploadStore = create<UploadStore>()(
           }
         );
 
+        // Listen for tray icon click to open upload panel
+        const unlistenTray = await listen('tray:open_upload_panel', () => {
+          // Open the upload drawer by setting isMinimized to false
+          set({ isMinimized: false });
+        });
+
         // Return cleanup function
         return () => {
           unlistenProgress();
           unlistenCompleted();
           unlistenFailed();
+          unlistenTray();
         };
       },
 
