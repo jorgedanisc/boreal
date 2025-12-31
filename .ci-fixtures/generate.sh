@@ -68,7 +68,7 @@ ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" -c:a libvorbis -q:a 5 -y "$O
 
 # Additional Audio
 for i in {04..10}; do
-    ffmpeg -f lavfi -i "sine=frequency=$((100 * i)):duration=3" -c:a libvorbis -y "$OUTPUT_DIR/aud_${i}_tone.ogg"
+    ffmpeg -f lavfi -i "sine=frequency=$((100 * 10#$i)):duration=3" -c:a libvorbis -y "$OUTPUT_DIR/aud_${i}_tone.ogg"
 done
 
 # =============================================================================
