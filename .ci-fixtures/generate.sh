@@ -212,7 +212,16 @@ GOOGLE_LONG=(
 EDGE_IDX=1
 for url in "${GOOGLE_LONG[@]}"; do
     filename=$(basename "$url")
-    download_file "$url" "$OUTPUT_DIR/edge_vid_${EDGE_IDX}_${filename}"
+    dest="$OUTPUT_DIR/edge_vid_${EDGE_IDX}_${filename}"
+    download_file "$url" "$dest"
+    
+    # Trim to 60s to prevent CI timeouts (files are originally ~150-600MB)
+    # Using a temporary file for the trimmed version
+    if [ -f "$dest" ]; then
+        echo "    [TRIM] Limiting $filename to 60s for CI..."
+        ffmpeg -i "$dest" -t 60 -c copy "$dest.tmp.mp4" -y 2>/dev/null && mv "$dest.tmp.mp4" "$dest" || echo "    [WARN] trimming failed"
+    fi
+
     ((EDGE_IDX++)) || true
 done
 

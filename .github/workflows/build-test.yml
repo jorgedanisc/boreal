@@ -78,9 +78,11 @@ jobs:
           key: fixtures-${{ hashFiles('.ci-fixtures/generate.sh') }}
       - name: Run Compression Benchmark
         working-directory: apps/client/src-tauri
+        timeout-minutes: 20
         run: |
           # Fixtures generated in previous step at root/.ci-fixtures/out
-          cargo run --example benchmark -- ../../../.ci-fixtures/out
+          # Using --release for realistic performance benchmarking
+          cargo run --release --example benchmark -- ../../../.ci-fixtures/out
       - name: Upload Report
         uses: actions/upload-artifact@v4
         with:
