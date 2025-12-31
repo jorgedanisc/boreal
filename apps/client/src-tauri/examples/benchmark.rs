@@ -374,45 +374,45 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         
         // 2. PROJECTED SCENARIOS
         report.push_str("\n## Cost Scenarios (1TB Library)\n");
-        report.push_str("Projections based on **actual measured sizes** from `media_processor.rs` logic.\n");
-        report.push_str("(Includes automatic Smart Passthrough for all media types).\n\n");
+        report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
         
         let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
         let thumb_fraction = real_thumb as f64 / real_orig as f64;
         let thumbs_gb = (tb_bytes * thumb_fraction) / (1024.0 * 1024.0 * 1024.0);
+        let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
         
-        // Scenario A: DESKTOP (Full Compression with Smart Passthrough)
+        // Scenario A: DESKTOP
         let desktop_ratio = real_comp as f64 / real_orig as f64;
         let desktop_orig_gb = (tb_bytes * desktop_ratio) / (1024.0 * 1024.0 * 1024.0);
         
-        // Scenario B: MOBILE (Images Compressed, AV Original)
-        // Mobile uses: Original Video/Audio + Compressed Images (using same logic as Desktop)
+        let dt_da_cost = desktop_orig_gb * COST_GLACIER_DEEP;
+        let dt_ir_cost = desktop_orig_gb * COST_S3_INSTANT;
+        
+        report.push_str("### 🖥️ Desktop (Compress Everything)\n");
+        report.push_str("| Storage Class | Original Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_da_cost, desktop_orig_gb, cost_thumbs, thumbs_gb, dt_da_cost + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_ir_cost, desktop_orig_gb, cost_thumbs, thumbs_gb, dt_ir_cost + cost_thumbs));
+        report.push_str("\n");
+
+        // Scenario B: MOBILE
+        // Mobile uses: Original Video/Audio (real_av_orig) + Compressed Images (real_img_comp)
         let mobile_total_size = real_av_orig + real_img_comp;
         let mobile_ratio = mobile_total_size as f64 / real_orig as f64;
         let mobile_orig_gb = (tb_bytes * mobile_ratio) / (1024.0 * 1024.0 * 1024.0);
 
-        report.push_str("| Scenario | Compressed Size | Thumbnails | Total Stored |\n");
-        report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| **Desktop** (Compress All) | {:.2} GB | {:.2} GB | {:.2} GB |\n", desktop_orig_gb, thumbs_gb, desktop_orig_gb + thumbs_gb));
-        report.push_str(&format!("| **Mobile** (Compress Images Only) | {:.2} GB | {:.2} GB | {:.2} GB |\n", mobile_orig_gb, thumbs_gb, mobile_orig_gb + thumbs_gb));
+        let mo_da_cost = mobile_orig_gb * COST_GLACIER_DEEP;
+        let mo_ir_cost = mobile_orig_gb * COST_S3_INSTANT;
 
-        // 3. DETAILED COSTS
-        report.push_str("\n### Monthly Cost Breakdown\n");
-        
-        let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
-        
-        // Desktop Costs
-        let dt_da_cost = (desktop_orig_gb * COST_GLACIER_DEEP) + cost_thumbs;
-        let dt_ir_cost = (desktop_orig_gb * COST_S3_INSTANT) + cost_thumbs;
-        
-        // Mobile Costs
-        let mo_da_cost = (mobile_orig_gb * COST_GLACIER_DEEP) + cost_thumbs;
-        let mo_ir_cost = (mobile_orig_gb * COST_S3_INSTANT) + cost_thumbs;
-        
-        report.push_str("| Storage Class | Desktop Cost | Mobile Cost | Notes |\n");
+        report.push_str("### 📱 Mobile (Compress Images Only)\n");
+        report.push_str("| Storage Class | Original Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
         report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals: $0.99/TB, Thumbs: Std |\n", dt_da_cost, mo_da_cost));
-        report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals: $4.00/TB, Thumbs: Std |\n", dt_ir_cost, mo_ir_cost));
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_da_cost, mobile_orig_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_ir_cost, mobile_orig_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_thumbs));
     }
     
     report

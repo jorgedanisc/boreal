@@ -69,6 +69,28 @@ ffmpeg -f lavfi -i testsrc=size=1280x720 -frames:v 1 -c:v libwebp -quality 80 -y
 ffmpeg -t 3 -f lavfi -i "life=s=320x240:mold=10:r=10:ratio=0.1:death_color=#C83232:life_color=#00ff00" \
     -vf "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" -loop 0 -y "$OUTPUT_DIR/synth_img_animated.gif" 2>/dev/null || echo "  [SKIP] Animated GIF"
 
+# --- Expanded Images (60+ Variants) ---
+echo "  Generating 60+ varied synthetic images..."
+for fmt in jpg png bmp tiff; do
+    for size in 320x240 800x600 1920x1080; do
+        for type in noise gradient solid; do
+             case $type in
+                noise) filter="nullsrc=s=$size,geq=random(1)*255:128:128" ;;
+                gradient) filter="testsrc=s=$size:r=1" ;;
+                solid) filter="color=c=blue:s=$size" ;;
+             esac
+             
+             # Varied compressibility
+             fname="synth_img_var_${type}_${size}.${fmt}"
+             ffmpeg -f lavfi -i "$filter" -frames:v 1 -y "$OUTPUT_DIR/$fname" 2>/dev/null
+        done
+    done
+done
+# Add some specifically specific edge cases (Tiny, Huge, Odd Aspect)
+ffmpeg -f lavfi -i "color=c=green:s=16x16" -frames:v 1 -y "$OUTPUT_DIR/synth_img_tiny_icon.png" 2>/dev/null
+ffmpeg -f lavfi -i "color=c=yellow:s=100x2000" -frames:v 1 -y "$OUTPUT_DIR/synth_img_vertical_strip.jpg" 2>/dev/null
+
+
 # --- Videos (Synthetic - format tests) ---
 ffmpeg -f lavfi -i testsrc=duration=5:size=1920x1080:rate=30 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/synth_vid_h264_1080p.mp4" 2>/dev/null
 ffmpeg -f lavfi -i testsrc=duration=3:size=720x1280:rate=30 -c:v libx264 -pix_fmt yuv420p -y "$OUTPUT_DIR/synth_vid_vertical.mp4" 2>/dev/null
@@ -79,6 +101,14 @@ ffmpeg -f lavfi -i testsrc=duration=3:size=1920x1080:rate=30 -c:v libx265 -crf 2
     -y "$OUTPUT_DIR/synth_vid_hevc.mp4" 2>/dev/null || echo "  [SKIP] HEVC (libx265 missing)"
 ffmpeg -f lavfi -i testsrc=duration=1:size=1920x1080:rate=24 -c:v prores_ks -profile:v 0 -pix_fmt yuv422p10le \
     -y "$OUTPUT_DIR/synth_vid_prores.mov" 2>/dev/null || echo "  [SKIP] ProRes"
+
+# --- Expanded Videos (Extra Containers/Codecs) ---
+# .mov with mjpeg (common in old cameras)
+ffmpeg -f lavfi -i testsrc=d=3:s=640x480 -c:v mjpeg -q:v 3 -y "$OUTPUT_DIR/synth_vid_mjepg.mov" 2>/dev/null
+# .mkv with h264
+ffmpeg -f lavfi -i testsrc=d=3:s=1280x720 -c:v libx264 -y "$OUTPUT_DIR/synth_vid_container.mkv" 2>/dev/null
+# .mp4 variable framerate sim
+ffmpeg -f lavfi -i testsrc=d=3:s=640x360:r=15 -c:v libx264 -y "$OUTPUT_DIR/synth_vid_lowfps.mp4" 2>/dev/null
 
 # Bitrate variations (for passthrough heuristic testing)
 ffmpeg -f lavfi -i testsrc=duration=3:size=1280x720:rate=30 -c:v libx264 -b:v 200k -maxrate 200k -bufsize 400k \
@@ -98,6 +128,9 @@ ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" -c:a libmp3lame -q:a 2 -y "$
     ffmpeg -f lavfi -i "sine=frequency=1000:duration=5" -c:a libvorbis -q:a 5 -y "$OUTPUT_DIR/synth_aud_sine_alt.ogg" 2>/dev/null
 ffmpeg -f lavfi -i "sine=frequency=440:duration=5" -c:a aac -b:a 128k -y "$OUTPUT_DIR/synth_aud_aac.m4a" 2>/dev/null
 ffmpeg -f lavfi -i "anoisesrc=d=5:c=white:r=48000" -c:a pcm_s24le -y "$OUTPUT_DIR/synth_aud_24bit.wav" 2>/dev/null
+# --- Expanded Audio ---
+ffmpeg -f lavfi -i "sine=f=220:d=5" -c:a pcm_s16le -y "$OUTPUT_DIR/synth_aud_pcm_16bit.wav" 2>/dev/null
+ffmpeg -f lavfi -i "sine=f=440:d=5" -c:a libmp3lame -b:a 320k -y "$OUTPUT_DIR/synth_aud_highq.mp3" 2>/dev/null
 
 # =============================================================================
 # SECTION 2: REAL-WORLD IMAGES (From Picsum - Lorem Ipsum for photos)

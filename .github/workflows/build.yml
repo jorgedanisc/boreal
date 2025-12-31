@@ -207,30 +207,26 @@ jobs:
           # 'file' is needed by linuxdeploy to check binary types
           # 'squashfs-tools' is needed for creating the AppImage filesystem
           sudo apt-get install -y fuse libfuse2 file squashfs-tools
-          mkdir -p ~/.local/bin
           
-          # Download linuxdeploy for aarch64
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O ~/.local/bin/linuxdeploy
-          chmod +x ~/.local/bin/linuxdeploy
+          # Download linuxdeploy for aarch64 to /usr/local/bin
+          sudo wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O /usr/local/bin/linuxdeploy
+          sudo chmod +x /usr/local/bin/linuxdeploy
           
-          # Download linuxdeploy-plugin-appimage for aarch64
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O ~/.local/bin/linuxdeploy-plugin-appimage
-          chmod +x ~/.local/bin/linuxdeploy-plugin-appimage
+          # Download linuxdeploy-plugin-appimage for aarch64 to /usr/local/bin
+          sudo wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O /usr/local/bin/linuxdeploy-plugin-appimage
+          sudo chmod +x /usr/local/bin/linuxdeploy-plugin-appimage
 
           # Create symlinks to match what Tauri/linuxdeploy might expect
-          ln -sf ~/.local/bin/linuxdeploy ~/.local/bin/linuxdeploy-aarch64.AppImage
-          ln -sf ~/.local/bin/linuxdeploy-plugin-appimage ~/.local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
-          
-          # Add to PATH for the rest of the workflow
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          sudo ln -sf /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-aarch64.AppImage
+          sudo ln -sf /usr/local/bin/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
           
           # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
           
           # Verify installation
           echo "Verifying linuxdeploy installation..."
-          $HOME/.local/bin/linuxdeploy --version || echo "linuxdeploy version check failed"
-          ls -la $HOME/.local/bin/
+          linuxdeploy --version || echo "linuxdeploy version check failed"
+          ls -la /usr/local/bin/linuxdeploy*
 
       - name: install frontend dependencies
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}
