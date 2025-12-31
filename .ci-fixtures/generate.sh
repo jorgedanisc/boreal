@@ -71,5 +71,85 @@ for i in {04..10}; do
     ffmpeg -f lavfi -i "sine=frequency=$((100 * i)):duration=3" -c:a libvorbis -y "$OUTPUT_DIR/aud_${i}_tone.ogg"
 done
 
+# =============================================================================
+# ADDITIONAL FILE TYPES - For comprehensive passthrough testing
+# =============================================================================
+
+# --- Animated GIF (Tests conversion to animated WebP) ---
+ffmpeg -f lavfi -i "life=s=320x240:mold=10:r=10:ratio=0.1:death_color=#C83232:life_color=#00ff00" \
+    -t 3 -vf "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" \
+    -loop 0 -y "$OUTPUT_DIR/img_11_animated.gif" 2>/dev/null || echo "WARN: Animated GIF failed"
+
+# --- HEVC Video (iPhone default since 2017) ---
+ffmpeg -f lavfi -i testsrc=duration=3:size=1920x1080:rate=30 \
+    -c:v libx265 -crf 28 -preset fast -tag:v hvc1 -pix_fmt yuv420p \
+    -y "$OUTPUT_DIR/vid_11_hevc_1080p.mp4" 2>/dev/null || echo "WARN: libx265 missing"
+
+# --- MOV Container (iPhone video format) ---
+ffmpeg -f lavfi -i testsrc=duration=2:size=1280x720:rate=30 \
+    -c:v libx264 -pix_fmt yuv420p \
+    -y "$OUTPUT_DIR/vid_12_quicktime.mov"
+
+# --- ProRes (Professional cameras / Final Cut exports) ---
+ffmpeg -f lavfi -i testsrc=duration=1:size=1920x1080:rate=24 \
+    -c:v prores_ks -profile:v 0 -pix_fmt yuv422p10le \
+    -y "$OUTPUT_DIR/vid_13_prores.mov" 2>/dev/null || echo "WARN: ProRes missing"
+
+# --- HDR / 10-bit Video ---
+ffmpeg -f lavfi -i testsrc=duration=2:size=1920x1080:rate=24 \
+    -pix_fmt yuv420p10le \
+    -c:v libx265 -x265-params "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" \
+    -y "$OUTPUT_DIR/vid_14_hdr_10bit.mp4" 2>/dev/null || echo "WARN: HDR/x265 missing"
+
+# --- Transparency PNG (with alpha channel) ---
+ffmpeg -f lavfi -i "color=c=black@0.0:size=512x512" \
+    -frames:v 1 -c:v png -pix_fmt rgba \
+    -y "$OUTPUT_DIR/img_12_transparent.png"
+
+# --- High-Entropy Image (Worst case for compression) ---
+ffmpeg -f lavfi -i "mandelbrot=size=3840x2160:start_scale=0.00000005" \
+    -frames:v 1 -q:v 2 \
+    -y "$OUTPUT_DIR/img_13_high_entropy.jpg"
+
+# --- WebP Input (Already compressed - test passthrough logic) ---
+ffmpeg -f lavfi -i testsrc=size=1280x720 -frames:v 1 \
+    -c:v libwebp -quality 80 \
+    -y "$OUTPUT_DIR/img_17_already_webp.webp"
+
+# --- AAC Audio (Most common mobile audio) ---
+ffmpeg -f lavfi -i "sine=frequency=440:duration=5" \
+    -c:a aac -b:a 128k \
+    -y "$OUTPUT_DIR/aud_11_aac.m4a"
+
+# --- High Bitrate Audio (24-bit Lossless) ---
+ffmpeg -f lavfi -i "anoisesrc=d=5:c=white:r=48000" \
+    -c:a pcm_s24le \
+    -y "$OUTPUT_DIR/aud_12_24bit.wav"
+
+# =============================================================================
+# BITRATE VARIATIONS - Critical for testing passthrough heuristic
+# =============================================================================
+
+# --- Very Low Bitrate (Should ALWAYS passthrough) ---
+ffmpeg -f lavfi -i testsrc=duration=3:size=1280x720:rate=30 \
+    -c:v libx264 -b:v 200k -maxrate 200k -bufsize 400k \
+    -y "$OUTPUT_DIR/vid_15_low_bitrate_200k.mp4"
+
+# --- Medium Bitrate (Borderline - tests threshold) ---
+ffmpeg -f lavfi -i testsrc=duration=3:size=1920x1080:rate=30 \
+    -c:v libx264 -b:v 4M -maxrate 4M -bufsize 8M \
+    -y "$OUTPUT_DIR/vid_16_medium_bitrate_4M.mp4"
+
+# --- High Bitrate (Should compress significantly) ---
+ffmpeg -f lavfi -i testsrc=duration=3:size=1920x1080:rate=30 \
+    -c:v libx264 -b:v 20M -maxrate 20M -bufsize 40M \
+    -y "$OUTPUT_DIR/vid_17_high_bitrate_20M.mp4"
+
+# --- Screen Recording Simulation (Very high bitrate, CRF 1) ---
+ffmpeg -f lavfi -i testsrc=duration=2:size=1920x1080:rate=60 \
+    -c:v libx264 -crf 1 \
+    -y "$OUTPUT_DIR/vid_18_screen_recording.mp4"
+
 echo "Fixtures generated successfully in $OUTPUT_DIR"
 ls -lh "$OUTPUT_DIR"
+

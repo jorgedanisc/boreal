@@ -15,6 +15,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Fetch Assets
         working-directory: apps/client
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bun install
           npm run fetch:ffmpeg
@@ -26,6 +28,7 @@ jobs:
             apps/client/src-tauri/binaries
             apps/client/src-tauri/models
           key: assets-${{ hashFiles('apps/client/scripts/**') }}
+
 
   release:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}

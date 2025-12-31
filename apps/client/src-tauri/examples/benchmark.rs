@@ -61,8 +61,29 @@ struct BenchmarkResult {
     processing_time_ms: u128,
     /// Status: "Compressed", "Passthrough", or "Skipped"
     status: String,
+    /// Input file extension
+    input_extension: String,
     /// Output extension (to verify format was preserved or changed)
     output_extension: String,
+    /// Input bitrate in kbps (for video passthrough analysis)
+    input_bitrate_kbps: Option<u32>,
+}
+
+/// Extract bitrate from video file using ffprobe
+fn get_video_bitrate(path: &Path) -> Option<u32> {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=bit_rate",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path.to_str().unwrap()
+        ])
+        .output()
+        .ok()?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim().parse::<u32>().ok().map(|b| b / 1000) // Convert to kbps
 }
 
 /// Recursively find relevant files in the directory
@@ -95,7 +116,7 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
 
         let start = Instant::now();
         let (processed, media_type) = match ext.as_str() {
-            "mp4" | "webm" | "mov" | "mkv" => {
+            "mp4" | "webm" | "mov" | "mkv" | "heic" => {
                 let output = test_dir.join(format!("output_{}.mp4", file_name));
                 
                 // Simulate Frontend Frame Extraction
@@ -105,13 +126,13 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
                 fs::remove_file(output).ok();
                 (p, "Video")
             }
-            "ogg" | "mp3" | "wav" | "flac" => {
+            "ogg" | "mp3" | "wav" | "flac" | "m4a" | "aac" => {
                 let output = test_dir.join(format!("output_{}.opus", file_name));
                 let p = media_processor::process_audio(&transcoder, &path, &output).await;
                 fs::remove_file(output).ok();
                 (p, "Audio")
             }
-            "jpg" | "jpeg" | "png" | "webp" => {
+            "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tiff" | "tif" | "gif" => {
                 let p = media_processor::process_image(&transcoder, &path).await;
                 (p, "Image")
             }
@@ -120,6 +141,7 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
                 continue;
             }
         };
+
 
         if let Err(e) = processed {
             log::info!("Failed to process {}: {}", file_name, e);
@@ -145,6 +167,13 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
         let output_ext = processed.original_extension.clone();
         let input_ext = ext.clone();
         
+        // Get bitrate for videos
+        let input_bitrate = if media_type == "Video" {
+            get_video_bitrate(&path)
+        } else {
+            None
+        };
+        
         let status = if media_type == "Image" {
             // Images always get compressed to WebP
             "Compressed".to_string()
@@ -167,7 +196,9 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             compression_ratio: ratio,
             processing_time_ms: duration.as_millis(),
             status,
+            input_extension: input_ext,
             output_extension: output_ext,
+            input_bitrate_kbps: input_bitrate,
         });
     }
 
@@ -179,16 +210,20 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str("# Compression Benchmark & Cost Analysis Report\n\n");
 
     report.push_str("## Processing Metrics\n\n");
-    report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time |\n");
-    report.push_str("|---|---|---|---|---|---|---|---|\n");
+    report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time | Bitrate |\n");
+    report.push_str("|---|---|---|---|---|---|---|---|---|\n");
 
     let mut total_orig = 0;
     let mut total_comp = 0;
     let mut total_thumb = 0;
 
     for r in results {
+        let bitrate_str = r.input_bitrate_kbps
+            .map(|b| format!("{}kbps", b))
+            .unwrap_or_else(|| "-".to_string());
+            
         report.push_str(&format!(
-            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
+            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms | {} |\n",
             r.file_name,
             r.media_type,
             r.status,
@@ -197,8 +232,10 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             r.output_extension,
             r.compression_ratio * 100.0,
             format_size(r.thumbnail_size_bytes),
-            r.processing_time_ms
+            r.processing_time_ms,
+            bitrate_str
         ));
+
 
         total_orig += r.original_size_bytes;
         total_comp += r.compressed_size_bytes;
