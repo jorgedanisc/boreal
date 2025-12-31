@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router'
 import { TitleBar } from '../components/TitleBar'
+import { Toaster } from 'sonner'
 
 export const Route = createRootRoute({
   component: () => (
@@ -10,6 +11,7 @@ export const Route = createRootRoute({
     >
       <TitleBar />
       <Outlet />
+      <Toaster richColors position="bottom-center" />
     </div >
   ),
 })

@@ -28,6 +28,45 @@ pub const MAX_RETRIES: u32 = 3;
 #[allow(dead_code)]
 pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
+/// Status of an object's restore state
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum RestoreStatus {
+    /// Object is immediately available (Standard, IA, or Glacier Instant Retrieval)
+    Available { size_bytes: u64 },
+    /// Object is archived and needs restore
+    Archived { size_bytes: u64 },
+    /// Restore is in progress
+    Restoring { size_bytes: u64 },
+    /// Object is restored and available until expiry
+    Restored {
+        expires_at: Option<String>,
+        size_bytes: u64,
+    },
+}
+
+/// Result of a restore operation
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum RestoreResult {
+    /// Restore was successfully initiated
+    Initiated,
+    /// Restore was already in progress
+    AlreadyInProgress,
+}
+
+/// Parse expiry date from x-amz-restore header
+/// Example: ongoing-request="false", expiry-date="Wed, 07 Nov 2012 00:00:00 GMT"
+fn parse_restore_expiry(header: &str) -> Option<String> {
+    // Look for expiry-date="..."
+    if let Some(start) = header.find("expiry-date=\"") {
+        let rest = &header[start + 13..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
 #[derive(Clone)]
 pub struct Storage {
     client: Client,
@@ -417,6 +456,107 @@ impl Storage {
             .await
             .context("Failed to delete bucket")?;
         Ok(())
+    }
+
+    /// Check the restore status of an archived object using HeadObject.
+    /// Returns the current restore state based on x-amz-restore header and storage class.
+    pub async fn check_restore_status(&self, key: &str) -> Result<RestoreStatus> {
+        let head_output = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .context("Failed to head object")?;
+
+        // Check storage class first
+        let storage_class = head_output.storage_class();
+        let content_length = head_output.content_length().unwrap_or(0) as u64;
+
+        // If storage class is STANDARD, STANDARD_IA, or ONEZONE_IA, it's immediately available
+        // GLACIER_IR (Glacier Instant Retrieval) is also immediately accessible
+        let is_immediately_accessible = match storage_class {
+            Some(class) => {
+                let class_str = class.as_str();
+                class_str == "STANDARD"
+                    || class_str == "STANDARD_IA"
+                    || class_str == "ONEZONE_IA"
+                    || class_str == "GLACIER_IR"
+                    || class_str == "INTELLIGENT_TIERING" // May need restore if in deep archive access tier
+            }
+            None => true, // No storage class means STANDARD
+        };
+
+        // Check the x-amz-restore header if present
+        // Format: ongoing-request="true" or ongoing-request="false", expiry-date="..."
+        if let Some(restore_header) = head_output.restore() {
+            // Parse the restore header
+            if restore_header.contains("ongoing-request=\"true\"") {
+                return Ok(RestoreStatus::Restoring { size_bytes: content_length });
+            } else if restore_header.contains("ongoing-request=\"false\"") {
+                // Extract expiry date from: expiry-date="Wed, 07 Nov 2012 00:00:00 GMT"
+                let expiry = parse_restore_expiry(restore_header);
+                return Ok(RestoreStatus::Restored {
+                    expires_at: expiry,
+                    size_bytes: content_length,
+                });
+            }
+        }
+
+        // No restore header - check if it's in an archived storage class
+        if is_immediately_accessible {
+            Ok(RestoreStatus::Available { size_bytes: content_length })
+        } else {
+            // GLACIER or DEEP_ARCHIVE without restore header = needs restore
+            Ok(RestoreStatus::Archived { size_bytes: content_length })
+        }
+    }
+
+    /// Initiate a restore for an archived object.
+    /// - `days`: Number of days the restored copy should remain available
+    /// - `tier`: Retrieval tier (Standard ~12h for Deep Archive, Bulk ~48h)
+    /// Returns RestoreResult indicating whether restore was started or already in progress.
+    pub async fn restore_object(&self, key: &str, days: i32, tier: aws_sdk_s3::types::Tier) -> Result<RestoreResult> {
+        use aws_sdk_s3::types::{GlacierJobParameters, RestoreRequest};
+
+        let glacier_params = GlacierJobParameters::builder()
+            .tier(tier)
+            .build()
+            .context("Failed to build GlacierJobParameters")?;
+
+        let restore_request = RestoreRequest::builder()
+            .days(days)
+            .glacier_job_parameters(glacier_params)
+            .build();
+
+        let result = self
+            .client
+            .restore_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .restore_request(restore_request)
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => {
+                // 200 OK = already restored, 202 Accepted = restore initiated
+                // The SDK doesn't expose the HTTP status directly, but either is success
+                Ok(RestoreResult::Initiated)
+            }
+            Err(e) => {
+                // Check for RestoreAlreadyInProgress (409 Conflict)
+                let service_err = e.as_service_error();
+                if let Some(err) = service_err {
+                    // The error code is "RestoreAlreadyInProgress"
+                    if err.to_string().contains("RestoreAlreadyInProgress") {
+                        return Ok(RestoreResult::AlreadyInProgress);
+                    }
+                }
+                Err(e.into())
+            }
+        }
     }
 }
 

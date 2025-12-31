@@ -1,14 +1,18 @@
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { IconInfoCircle, IconInfoCircleFilled, IconX } from '@tabler/icons-react';
+import { IconInfoCircle, IconInfoCircleFilled, IconX, IconLoader2, IconDownload, IconCheck, IconClock } from '@tabler/icons-react';
 import { invoke } from '@tauri-apps/api/core';
 import { type } from '@tauri-apps/plugin-os';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
+import { toast } from 'sonner';
 import { CalendarIcon, ImageIcon, MapPinIcon, XIcon, CameraIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { PhotoProvider, PhotoSlider, PhotoView } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
+import { checkOriginalStatus, requestOriginalRestore, getOriginal, OriginalStatus } from '@/lib/vault';
 
 export interface PhotoMetadata {
   id: string;
@@ -27,6 +31,7 @@ export interface PhotoMetadata {
   iso?: number;
   f_number?: number;
   exposure_time?: string;
+  media_type?: 'image' | 'video' | 'audio';
 }
 
 interface QuickPhotoSliderProps {
@@ -312,6 +317,9 @@ function formatBytes(bytes: number, decimals = 2) {
 export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, photos, thumbnails, onPhotoUpdate }: QuickPhotoSliderProps) {
   const [showInfo, setShowInfo] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [originalStatus, setOriginalStatus] = useState<OriginalStatus | null>(null);
+  const [isLoadingOriginal, setIsLoadingOriginal] = useState(false);
+  const [originalSrc, setOriginalSrc] = useState<string | null>(null);
 
   useEffect(() => {
     const osType = type();
@@ -321,6 +329,136 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
   }, []);
 
   const currentPhoto = photos[index];
+
+  // Helper to load original (reused for auto-load and manual click)
+  const loadOriginalImage = useCallback(async () => {
+    if (!currentPhoto) return;
+    console.log('[Original] Start loading full resolution image...');
+    console.log('[Original] media_type:', currentPhoto.media_type);
+    setIsLoadingOriginal(true);
+    try {
+      const base64 = await getOriginal(currentPhoto.id);
+      console.log('[Original] Successfully loaded full resolution image');
+
+      // Determine MIME type based on media_type
+      let mimeType = 'image/webp'; // Default
+      if (currentPhoto.media_type === 'video') {
+        console.log('[Original] Detected VIDEO, setting video MIME type');
+        // Naive MIME type detection for video - could be improved with real file magic numbers or metadata
+        // But browsers are often forgiving with base64 video src if the container matches the data
+        mimeType = 'video/mp4'; // fallback common type
+        if (currentPhoto.filename.toLowerCase().endsWith('.mov')) mimeType = 'video/quicktime';
+        if (currentPhoto.filename.toLowerCase().endsWith('.webm')) mimeType = 'video/webm';
+      }
+
+      console.log('[Original] Setting originalSrc with MIME:', mimeType);
+      setOriginalSrc(`data:${mimeType};base64,${base64}`);
+      setOriginalStatus(prev => prev ? ({ ...prev, status: 'cached', cached: true }) : null);
+    } catch (e) {
+      console.error('Failed to load original:', e);
+      toast.error('Failed to load original');
+    } finally {
+      setIsLoadingOriginal(false);
+    }
+  }, [currentPhoto]);
+
+  // Check original status when photo changes
+  useEffect(() => {
+    if (!currentPhoto) return;
+
+    // Reset state for new photo
+    setOriginalStatus(null);
+    setOriginalSrc(null);
+
+    // Check original status
+    checkOriginalStatus(currentPhoto.id)
+      .then((status) => {
+        console.log('[Original] Status:', status);
+        setOriginalStatus(status);
+        // Auto-load if cached or restored
+        if (status.cached) {
+          console.log('[Original] Cache detected, auto-loading...');
+          setIsLoadingOriginal(true);
+          getOriginal(currentPhoto.id).then(base64 => {
+            // Determine MIME type based on media_type (same logic as loadOriginalImage)
+            let mimeType = 'image/webp'; // Default
+            if (currentPhoto.media_type === 'video') {
+              console.log('[Original] Auto-load: Detected VIDEO, setting video MIME type');
+              mimeType = 'video/mp4'; // fallback common type
+              if (currentPhoto.filename.toLowerCase().endsWith('.mov')) mimeType = 'video/quicktime';
+              if (currentPhoto.filename.toLowerCase().endsWith('.webm')) mimeType = 'video/webm';
+            }
+            console.log('[Original] Auto-load: Setting originalSrc with MIME:', mimeType);
+            setOriginalSrc(`data:${mimeType};base64,${base64}`);
+            setOriginalStatus({ ...status, status: 'cached', cached: true });
+            setIsLoadingOriginal(false);
+          }).catch(e => {
+            console.error(e);
+            setIsLoadingOriginal(false);
+          });
+        }
+      })
+      .catch((e) => console.error('Failed to check original status:', e));
+  }, [currentPhoto?.id]);
+
+  // Handle manual load request
+  const handleLoadOriginal = useCallback(async () => {
+    if (!currentPhoto || !originalStatus) return;
+
+    // If archived, request restore
+    if (originalStatus.status === 'archived') {
+      setIsLoadingOriginal(true);
+      try {
+        const result = await requestOriginalRestore(currentPhoto.id);
+        console.log('[Original] Restore requested:', result);
+        const newStatus = await checkOriginalStatus(currentPhoto.id);
+        setOriginalStatus(newStatus);
+        toast.info('Restore requested. It may take up to 12 hours.');
+      } catch (e) {
+        console.error('Failed to request restore:', e);
+        toast.error('Failed to request restore');
+      } finally {
+        setIsLoadingOriginal(false);
+      }
+      return;
+    }
+
+    // If available/restored, load it
+    loadOriginalImage();
+  }, [currentPhoto, originalStatus, loadOriginalImage]);
+
+  // Handle Download
+  const handleDownload = async () => {
+    if (!currentPhoto) return;
+
+    // If not loaded, trigger load and warn
+    if (!originalSrc) {
+      console.log('[Download] Original not loaded, triggering load...');
+      toast('Loading original file...', { duration: 3000 });
+      loadOriginalImage();
+      return;
+    }
+
+    try {
+      const path = await save({
+        defaultPath: currentPhoto.filename,
+      });
+      if (path) {
+        const base64 = originalSrc.split(',')[1];
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        await writeFile(path, bytes);
+        toast.success('Saved to ' + path);
+      }
+    } catch (e) {
+      console.error('Download failed', e);
+      toast.error('Download failed');
+    }
+  };
 
   // Helper handling
   const handleUpdate = (updates: Partial<PhotoMetadata>) => {
@@ -332,8 +470,20 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
   return (
     <PhotoSlider
       images={photos.map((p) => ({
-        src: thumbnails[p.id] || '',
+        src: (p.id === currentPhoto?.id && originalSrc) ? originalSrc : (thumbnails[p.id] || ''),
         key: p.id,
+        // Custom render for video originals
+        render: (p.id === currentPhoto?.id && originalSrc && p.media_type === 'video') ? () => (
+          <div className="w-full h-full flex items-center justify-center bg-black">
+            <video
+              src={originalSrc}
+              controls
+              autoPlay
+              className="max-w-full max-h-full"
+              style={{ maxHeight: '100vh', maxWidth: '100vw' }}
+            />
+          </div>
+        ) : undefined
       }))}
       visible={visible}
       onClose={onClose}
@@ -350,23 +500,69 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
             className="absolute top-0 left-0 right-0 z-50 pointer-events-none"
             style={{ paddingTop: isDesktop ? '32px' : 'env(safe-area-inset-top)' }}
           >
-            <div className="flex items-center justify-end gap-3 px-4 pt-4 pb-2 pointer-events-auto">
-              <button
-                onClick={() => setShowInfo(!showInfo)}
-                className={`p-2.5 rounded-full backdrop-blur-md`}
-                title="Information"
-              >
-                {
-                  !showInfo ? <IconInfoCircle className="w-5 h-5" /> : <IconInfoCircleFilled className="w-5 h-5" />
-                }
-              </button>
-              <button
-                onClick={onClose}
-                className="p-2.5 rounded-full backdrop-blur-md bg-black/30 text-white/90 hover:bg-black/50 transition-colors"
-                title="Close"
-              >
-                <IconX className="w-5 h-5" />
-              </button>
+            <div className="flex items-center justify-between px-4 pt-4 pb-2 pointer-events-auto">
+              {/* Left Side: Load Original Button */}
+              <div className="flex items-center gap-3">
+                {originalStatus && (
+                  <button
+                    onClick={handleLoadOriginal}
+                    disabled={isLoadingOriginal || originalStatus.status === 'restoring' || originalStatus.status === 'cached'}
+                    className={`flex items-center gap-1.5 px-3 py-2.5 rounded-full backdrop-blur-md transition-colors text-sm font-medium
+                          ${originalStatus.status === 'cached'
+                        ? 'bg-green-500/20 text-green-300 cursor-default opacity-80'
+                        : originalStatus.status === 'restoring'
+                          ? 'bg-yellow-500/20 text-yellow-300 cursor-not-allowed opacity-80'
+                          : 'bg-black/30 text-white/90 hover:bg-black/50'}`}
+                    title={originalStatus.status === 'cached' ? 'Viewing original' : 'Load original file'}
+                  >
+                    {isLoadingOriginal ? (
+                      <IconLoader2 className="w-4 h-4 animate-spin" />
+                    ) : originalStatus.status === 'cached' ? (
+                      <IconCheck className="w-4 h-4" />
+                    ) : originalStatus.status === 'restoring' ? (
+                      <IconClock className="w-4 h-4" />
+                    ) : (
+                      <IconDownload className="w-4 h-4" />
+                    )}
+                    <span>
+                      {originalStatus.status === 'cached'
+                        ? 'Viewing Original'
+                        : originalStatus.status === 'restoring'
+                          ? 'Restoring...'
+                          : 'Load Original'}
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              {/* Right Side: Download, Info & Close */}
+              <div className="flex items-center gap-3">
+                {originalStatus && (
+                  <button
+                    onClick={handleDownload}
+                    className="p-2.5 rounded-full backdrop-blur-md bg-black/30 text-white/90 hover:bg-black/50 transition-colors"
+                    title="Download Original"
+                  >
+                    <IconDownload className="w-5 h-5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowInfo(!showInfo)}
+                  className="p-2.5 rounded-full backdrop-blur-md bg-black/30 text-white/90 hover:bg-black/50 transition-colors"
+                  title="Information"
+                >
+                  {
+                    !showInfo ? <IconInfoCircle className="w-5 h-5" /> : <IconInfoCircleFilled className="w-5 h-5" />
+                  }
+                </button>
+                <button
+                  onClick={onClose}
+                  className="p-2.5 rounded-full backdrop-blur-md bg-black/30 text-white/90 hover:bg-black/50 transition-colors"
+                  title="Close"
+                >
+                  <IconX className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           </div>
 

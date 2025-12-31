@@ -97,6 +97,19 @@ pub fn init_db(path: &Path) -> Result<Connection> {
         [],
     )?;
 
+    // Migration: Original Restores table for tracking Deep Glacier restore requests
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS original_restores (
+            photo_id TEXT PRIMARY KEY,
+            requested_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'restoring',  -- 'restoring', 'ready', 'viewed'
+            expires_at TEXT,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
     Ok(conn)
 }
 
@@ -164,4 +177,95 @@ pub fn load_embeddings(conn: &Connection) -> Result<Vec<(String, Vec<f32>)>> {
     }
     
     Ok(results)
+}
+
+// ============ Original Restores Functions ============
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RestoreRequest {
+    pub photo_id: String,
+    pub requested_at: String,
+    pub status: String, // "restoring", "ready", "viewed"
+    pub expires_at: Option<String>,
+    pub size_bytes: i64,
+}
+
+pub fn insert_restore_request(
+    conn: &Connection,
+    photo_id: &str,
+    size_bytes: i64,
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO original_restores (photo_id, requested_at, status, size_bytes)
+         VALUES (?1, ?2, 'restoring', ?3)",
+        rusqlite::params![photo_id, now, size_bytes],
+    )?;
+    Ok(())
+}
+
+pub fn get_restore_request(conn: &Connection, photo_id: &str) -> Result<Option<RestoreRequest>> {
+    let mut stmt = conn.prepare(
+        "SELECT photo_id, requested_at, status, expires_at, size_bytes FROM original_restores WHERE photo_id = ?1"
+    )?;
+    
+    let mut rows = stmt.query([photo_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(RestoreRequest {
+            photo_id: row.get(0)?,
+            requested_at: row.get(1)?,
+            status: row.get(2)?,
+            expires_at: row.get(3)?,
+            size_bytes: row.get(4)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn update_restore_status(
+    conn: &Connection,
+    photo_id: &str,
+    status: &str,
+    expires_at: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE original_restores SET status = ?2, expires_at = ?3 WHERE photo_id = ?1",
+        rusqlite::params![photo_id, status, expires_at],
+    )?;
+    Ok(())
+}
+
+/// Get all pending restores (status = 'restoring' or 'ready')
+pub fn get_pending_restores(conn: &Connection) -> Result<Vec<RestoreRequest>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.photo_id, r.requested_at, r.status, r.expires_at, r.size_bytes 
+         FROM original_restores r
+         WHERE r.status IN ('restoring', 'ready')
+         ORDER BY r.requested_at DESC"
+    )?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(RestoreRequest {
+            photo_id: row.get(0)?,
+            requested_at: row.get(1)?,
+            status: row.get(2)?,
+            expires_at: row.get(3)?,
+            size_bytes: row.get(4)?,
+        })
+    })?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row?);
+    }
+    Ok(results)
+}
+
+pub fn delete_restore_request(conn: &Connection, photo_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM original_restores WHERE photo_id = ?1",
+        [photo_id],
+    )?;
+    Ok(())
 }

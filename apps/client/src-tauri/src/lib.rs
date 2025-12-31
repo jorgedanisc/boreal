@@ -8,6 +8,7 @@ mod file_filter;
 mod manifest;
 pub mod media_processor;
 mod memories;
+mod originals_cache;
 mod pairing;
 mod qr_transfer;
 mod storage;
@@ -50,6 +51,10 @@ struct QrTransferManagerState {
 
 struct TrayManagerState {
     manager: Arc<tokio::sync::RwLock<tray_manager::TrayManager>>,
+}
+
+struct OriginalsCacheState {
+    cache: Arc<Mutex<Option<originals_cache::OriginalsCache>>>,
 }
 
 // Commands
@@ -115,6 +120,7 @@ async fn load_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    originals_cache_state: State<'_, OriginalsCacheState>,
     embedding_state: State<'_, embedding::EmbeddingState>,
     id: String,
 ) -> Result<(), String> {
@@ -175,6 +181,12 @@ async fn load_vault(
     // 7. Initialize ThumbnailCache for this vault
     let thumbnail_cache = ThumbnailCache::new(&vault_dir).map_err(|e| e.to_string())?;
     *cache_state.thumbnail_cache.lock().await = Some(thumbnail_cache);
+
+    // 8. Initialize OriginalsCache for this vault (Deep Glacier restore flow)
+    let originals_cache_instance = originals_cache::OriginalsCache::new(&vault_dir)
+        .map_err(|e| format!("Failed to init originals cache: {}", e))?;
+    *originals_cache_state.cache.lock().await = Some(originals_cache_instance);
+    log::info!("[OriginalsCache] Initialized for vault {}", config.id);
 
     // 8. Update State
     *state.storage.lock().await = Some(storage);
@@ -360,10 +372,11 @@ async fn import_vault_step2_load(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    originals_cache_state: State<'_, OriginalsCacheState>,
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_id: String,
 ) -> Result<(), String> {
-    load_vault(app, state, cache_state, embedding_state, vault_id)
+    load_vault(app, state, cache_state, originals_cache_state, embedding_state, vault_id)
         .await
         .map_err(|e| format!("Failed to activate vault: {}", e))
 }
@@ -383,6 +396,7 @@ async fn import_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    originals_cache_state: State<'_, OriginalsCacheState>,
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
@@ -420,7 +434,7 @@ async fn import_vault(
 
     // Activate vault (loads DB, sets up storage)
     log::info!("[Import] Activating vault (load_vault)...");
-    load_vault(app, state.clone(), cache_state, embedding_state, id)
+    load_vault(app, state.clone(), cache_state, originals_cache_state, embedding_state, id)
         .await
         .map_err(|e| {
             log::info!("[Import] FAILED to activate vault: {}", e);
@@ -623,6 +637,7 @@ async fn bootstrap_vault(
     app: AppHandle,
     state: State<'_, AppState>,
     cache_state: State<'_, CacheState>,
+    originals_cache_state: State<'_, OriginalsCacheState>,
     embedding_state: State<'_, embedding::EmbeddingState>,
     vault_code: String,
 ) -> Result<(), String> {
@@ -663,7 +678,7 @@ async fn bootstrap_vault(
     store::save_vault(&app, &config)?;
 
     // 6. Activate
-    load_vault(app, state, cache_state, embedding_state, id).await
+    load_vault(app, state, cache_state, originals_cache_state, embedding_state, id).await
 }
 
 #[tauri::command]
@@ -1176,6 +1191,295 @@ async fn get_audio(state: State<'_, AppState>, id: String) -> Result<String, Str
 
     // Return Base64
     Ok(BASE64.encode(&dec_bytes))
+}
+
+// ============ Deep Glacier Restore Commands ============
+
+/// Response for check_original_status command
+#[derive(serde::Serialize)]
+struct OriginalStatusResponse {
+    status: String, // "cached", "available", "archived", "restoring", "restored"
+    cached: bool,
+    size_bytes: u64,
+    expires_at: Option<String>,
+}
+
+/// Check if an original is available (cache first, then S3 status)
+/// This is the main entry point for the lightbox to determine what to show
+#[tauri::command]
+async fn check_original_status(
+    state: State<'_, AppState>,
+    originals_cache: State<'_, OriginalsCacheState>,
+    id: String,
+) -> Result<OriginalStatusResponse, String> {
+    // 1. Check originals cache first
+    {
+        let cache_guard = originals_cache.cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            if cache.is_cached(&id) {
+                // We have it cached - get size from DB to include
+                let db_guard = state.db.lock().await;
+                let size = if let Some(conn) = db_guard.as_ref() {
+                    let mut stmt = conn.prepare("SELECT size_bytes FROM photos WHERE id = ?1")
+                        .map_err(|e| e.to_string())?;
+                    stmt.query_row([&id], |row| row.get::<_, Option<i64>>(0))
+                        .unwrap_or(None)
+                        .unwrap_or(0) as u64
+                } else { 0 };
+                
+                return Ok(OriginalStatusResponse {
+                    status: "cached".to_string(),
+                    cached: true,
+                    size_bytes: size,
+                    expires_at: None,
+                });
+            }
+        }
+    }
+
+    // 2. Check S3 restore status
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+
+    // Get the original S3 key from DB
+    let s3_key = {
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+        let mut stmt = conn.prepare("SELECT s3_key FROM photos WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row([&id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Photo not found: {}", e))?
+    };
+
+    // Call HeadObject to check storage class and restore status
+    let restore_status = storage.check_restore_status(&s3_key).await
+        .map_err(|e| format!("Failed to check restore status: {}", e))?;
+
+    match restore_status {
+        storage::RestoreStatus::Available { size_bytes } => Ok(OriginalStatusResponse {
+            status: "available".to_string(),
+            cached: false,
+            size_bytes,
+            expires_at: None,
+        }),
+        storage::RestoreStatus::Archived { size_bytes } => Ok(OriginalStatusResponse {
+            status: "archived".to_string(),
+            cached: false,
+            size_bytes,
+            expires_at: None,
+        }),
+        storage::RestoreStatus::Restoring { size_bytes } => Ok(OriginalStatusResponse {
+            status: "restoring".to_string(),
+            cached: false,
+            size_bytes,
+            expires_at: None,
+        }),
+        storage::RestoreStatus::Restored { expires_at, size_bytes } => Ok(OriginalStatusResponse {
+            status: "restored".to_string(),
+            cached: false,
+            size_bytes,
+            expires_at,
+        }),
+    }
+}
+
+/// Request restore for a Deep Archive original
+/// Uses 30-day restore for small files, 3-day for large files (>500MB)
+#[tauri::command]
+async fn request_original_restore(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let storage_guard = state.storage.lock().await;
+    let storage = storage_guard.as_ref().ok_or("Storage not initialized")?;
+
+    // Get the original S3 key and size from DB
+    let (s3_key, size_bytes) = {
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+        let mut stmt = conn.prepare("SELECT s3_key, size_bytes FROM photos WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row([&id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(0)))
+        }).map_err(|e| format!("Photo not found: {}", e))?
+    };
+
+    // Determine restore duration based on file size
+    // Files >500MB get 3-day restore (won't cache locally)
+    // Files ≤500MB get 30-day restore (will cache locally)
+    let restore_days = if size_bytes as u64 > originals_cache::MAX_CACHEABLE_SIZE {
+        3
+    } else {
+        30
+    };
+
+    // Initiate restore with Standard tier (~12h for Deep Archive)
+    let result = storage.restore_object(&s3_key, restore_days, aws_sdk_s3::types::Tier::Standard).await
+        .map_err(|e| format!("Failed to restore: {}", e))?;
+
+    // Record the restore request in DB
+    {
+        let db_guard = state.db.lock().await;
+        if let Some(conn) = db_guard.as_ref() {
+            db::insert_restore_request(conn, &id, size_bytes)
+                .map_err(|e| format!("Failed to record restore request: {}", e))?;
+        }
+    }
+
+    match result {
+        storage::RestoreResult::Initiated => Ok("initiated".to_string()),
+        storage::RestoreResult::AlreadyInProgress => Ok("already_in_progress".to_string()),
+    }
+}
+
+/// Get original file (from cache or S3 if restored)
+/// Returns base64 encoded decrypted original
+#[tauri::command]
+async fn get_original(
+    state: State<'_, AppState>,
+    originals_cache: State<'_, OriginalsCacheState>,
+    id: String,
+) -> Result<String, String> {
+    log::info!("[get_original] Starting for id: {}", id);
+    
+    // 1. Check cache first
+    {
+        let cache_guard = originals_cache.cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            log::info!("[get_original] Cache exists, checking for cached file...");
+            if let Some(cached_bytes) = cache.get(&id) {
+                log::info!("[get_original] Cache HIT! Returning {} bytes from cache", cached_bytes.len());
+                return Ok(BASE64.encode(&cached_bytes));
+            }
+            log::info!("[get_original] Cache MISS, will download from S3");
+        } else {
+            log::warn!("[get_original] Cache is NOT initialized! Files will not be cached.");
+        }
+    }
+
+    // 2. Download from S3
+    let (storage, vault_key) = {
+        let storage_guard = state.storage.lock().await;
+        let config_guard = state.config.lock().await;
+        let storage = storage_guard.as_ref().ok_or("Storage not initialized")?.clone();
+        let config = config_guard.as_ref().ok_or("Vault not loaded")?;
+        let vault_key = BASE64.decode(&config.vault_key)
+            .map_err(|e| format!("Invalid vault key: {}", e))?;
+        (storage, vault_key)
+    };
+
+    let key_arr: [u8; 32] = vault_key.try_into().map_err(|_| "Invalid key length")?;
+
+    // Get S3 key from DB
+    let s3_key = {
+        let db_guard = state.db.lock().await;
+        let conn = db_guard.as_ref().ok_or("DB not initialized")?;
+        let mut stmt = conn.prepare("SELECT s3_key FROM photos WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row([&id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Photo not found: {}", e))?
+    };
+
+    log::info!("[get_original] Downloading from S3: {}", s3_key);
+
+    // Download and decrypt
+    let enc_bytes = storage.download_file(&s3_key).await
+        .map_err(|e| format!("Failed to download: {}", e))?;
+    
+    let dec_bytes = crypto::decrypt(&enc_bytes, &key_arr)
+        .map_err(|e| format!("Decryption failed: {}", e))?;
+
+    log::info!("[get_original] Downloaded and decrypted {} bytes", dec_bytes.len());
+
+    // 3. Cache if small enough (≤500MB)
+    let file_size = dec_bytes.len() as u64;
+    if file_size <= originals_cache::MAX_CACHEABLE_SIZE {
+        // Extract extension from S3 key (e.g., "originals/abc123.webp" -> "webp")
+        let extension = s3_key
+            .rsplit('.')
+            .next()
+            .unwrap_or("dat");
+        
+        let cache_guard = originals_cache.cache.lock().await;
+        if let Some(cache) = cache_guard.as_ref() {
+            match cache.put(&id, extension, &dec_bytes) {
+                Ok(true) => log::info!("[get_original] Successfully cached file as {}.{} ({} bytes)", id, extension, file_size),
+                Ok(false) => log::info!("[get_original] File too large to cache"),
+                Err(e) => log::error!("[get_original] Failed to cache: {}", e),
+            }
+        } else {
+            log::warn!("[get_original] Cannot cache: cache not initialized");
+        }
+    } else {
+        log::info!("[get_original] File too large to cache ({} MB > 500 MB)", file_size / (1024 * 1024));
+    }
+
+    // 4. Mark as viewed in DB
+    {
+        let db_guard = state.db.lock().await;
+        if let Some(conn) = db_guard.as_ref() {
+            db::update_restore_status(conn, &id, "viewed", None).ok();
+        }
+    }
+
+    Ok(BASE64.encode(&dec_bytes))
+}
+
+/// Response for get_pending_restores_for_vault
+#[derive(serde::Serialize)]
+struct PendingRestoreInfo {
+    photo_id: String,
+    filename: String,
+    status: String,
+    requested_at: String,
+    expires_at: Option<String>,
+    size_bytes: i64,
+}
+
+/// Get all pending restore requests for a vault (for welcome page)
+#[tauri::command]
+async fn get_pending_restores_for_vault(
+    app: AppHandle,
+    vault_id: String,
+) -> Result<Vec<PendingRestoreInfo>, String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_dir = app_dir.join("vaults").join(&vault_id);
+    let db_path = vault_dir.join("manifest.db");
+
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
+    
+    // Get pending restores with photo filename
+    let mut stmt = conn.prepare(
+        "SELECT r.photo_id, p.filename, r.status, r.requested_at, r.expires_at, r.size_bytes
+         FROM original_restores r
+         JOIN photos p ON r.photo_id = p.id
+         WHERE r.status IN ('restoring', 'ready')
+         ORDER BY r.requested_at DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([], |row| {
+        Ok(PendingRestoreInfo {
+            photo_id: row.get(0)?,
+            filename: row.get(1)?,
+            status: row.get(2)?,
+            requested_at: row.get(3)?,
+            expires_at: row.get(4)?,
+            size_bytes: row.get(5)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        if let Ok(info) = row {
+            results.push(info);
+        }
+    }
+    
+    Ok(results)
 }
 
 /// Sync thumbnail cache - checks manifest against local cache and fetches missing thumbnails
@@ -2608,6 +2912,10 @@ pub fn run() {
         .manage(TrayManagerState {
             manager: Arc::new(tokio::sync::RwLock::new(tray_manager::TrayManager::new())),
         })
+        // Originals cache state for Deep Glacier restore flow
+        .manage(OriginalsCacheState {
+            cache: Arc::new(Mutex::new(None)),
+        })
         .invoke_handler(tauri::generate_handler![
             import_vault,
             import_vault_step1_save,
@@ -2686,6 +2994,11 @@ pub fn run() {
             // Cross-platform embedding persistence
             save_embedding,
             load_embeddings,
+            // Deep Glacier restore commands
+            check_original_status,
+            request_original_restore,
+            get_original,
+            get_pending_restores_for_vault,
             // Debugging
             debug_log,
             download_file,

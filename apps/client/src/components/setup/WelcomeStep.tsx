@@ -9,7 +9,8 @@ import { IconChevronRight, IconDownload, IconLoader, IconMap, IconPlus, IconSear
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 // import { getDailyQuote } from "@/lib/quotes";
-import { ArrowRightIcon, ScanQrCodeIcon } from "lucide-react";
+import { PendingRestoresSection } from "@/components/setup/PendingRestoresSection";
+import { ScanQrCodeIcon } from "lucide-react";
 
 interface WelcomeStepProps {
   onCreateVault: () => void;
@@ -92,7 +93,6 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                       <p className="text-sm font-medium uppercase tracking-wider">
                         {t("setup.welcome.openVault")}
                       </p>
-                      <ArrowRightIcon className="size-3" />
                     </Button>
                   </div>
                   <div className="flex items-center gap-1">
@@ -164,14 +164,14 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
 
                   {/* Gradient Overlay & Button if more vaults exist */}
                   {vaults.length > MAX_VISIBLE_VAULTS && (
-                    <div className="absolute inset-x-0 -bottom-8 h-24 bg-gradient-to-t from-background via-background/80 to-transparent flex items-center justify-center">
+                    <div className="absolute inset-x-0 -bottom-2 h-20 bg-linear-to-t from-background via-background/80 to-transparent flex items-end justify-center pb-2">
                       <Button
                         variant="secondary"
                         size="sm"
-                        className="shadow-sm z-10 font-medium"
+                        className="shadow-sm font-medium"
                         onClick={() => navigate({ to: "/vaults" })}
                       >
-                        View more vaults
+                        View {vaults.length - MAX_VISIBLE_VAULTS} more
                       </Button>
                     </div>
                   )}
@@ -182,22 +182,26 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
             {/* Actions */}
             <div className="space-y-4 mt-12">
               {vaults.length > 0 && (
-                <Button
-                  variant="ghost"
-                  className="text-muted-foreground"
-                  onClick={onCreateVault}
-                >
-                  <p className="text-sm font-medium uppercase tracking-wider">
-                    {t("setup.welcome.newVault")}
-                  </p>
-                </Button>
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      className="text-muted-foreground"
+                      onClick={onCreateVault}
+                    >
+                      <p className="text-sm font-medium uppercase tracking-wider">
+                        {t("setup.welcome.newVault")}
+                      </p>
+                    </Button>
+                  </div>
+                </div>
               )}
 
               <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
                   onClick={onCreateVault}
-                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <IconPlus className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -210,7 +214,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 <button
                   type="button"
                   onClick={() => navigate({ to: "/scan" })}
-                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <ScanQrCodeIcon className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -223,7 +227,7 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
                 <button
                   type="button"
                   onClick={() => navigate({ to: "/pairing" })}
-                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-gradient-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
+                  className="relative grow rounded-xl border border-border/50 bg-card/50 px-3 py-4 text-center transition-all duration-200 group hover:scale-[1.02] active:scale-[0.98] hover:border-foreground/20 hover:bg-linear-to-br hover:from-foreground/10 hover:via-foreground/5 hover:to-transparent"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <IconWifi className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -245,8 +249,14 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
               </Button>
             </div>
           </div>
-        )}
-      </div>
+        )
+        }
+
+        {/* Pending Original Restores */}
+        <div className="mt-12">
+          {vaults.length > 0 && <PendingRestoresSection />}
+        </div>
+      </div >
 
 
       <RenameVaultDialog

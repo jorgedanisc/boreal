@@ -356,3 +356,73 @@ export function queueManifestSync(): void {
   }, 5000);
 }
 
+// ============ Deep Glacier Restore Types & Functions ============
+
+export interface OriginalStatus {
+  status: 'cached' | 'available' | 'archived' | 'restoring' | 'restored';
+  cached: boolean;
+  size_bytes: number;
+  expires_at?: string;
+}
+
+export interface PendingRestore {
+  photo_id: string;
+  filename: string;
+  status: 'restoring' | 'ready';
+  requested_at: string;
+  expires_at?: string;
+  size_bytes: number;
+}
+
+/**
+ * Check if an original is available (cache first, then S3 status).
+ * This is the main entry point for the lightbox to determine what UI to show.
+ * @param id Photo ID
+ * @returns OriginalStatus with status, cached flag, size, and optional expiry
+ */
+export async function checkOriginalStatus(id: string): Promise<OriginalStatus> {
+  try {
+    return await invoke('check_original_status', { id });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Request restore for a Deep Archive original.
+ * Uses 30-day restore for small files (≤500MB), 3-day for large files.
+ * @param id Photo ID
+ * @returns "initiated" or "already_in_progress"
+ */
+export async function requestOriginalRestore(id: string): Promise<string> {
+  try {
+    return await invoke('request_original_restore', { id });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Get original file (from cache or S3 if restored).
+ * Returns base64 encoded decrypted original.
+ * @param id Photo ID
+ */
+export async function getOriginal(id: string): Promise<string> {
+  try {
+    return await invoke('get_original', { id });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}
+
+/**
+ * Get all pending restore requests for a vault (for welcome page).
+ * @param vaultId Vault ID
+ */
+export async function getPendingRestoresForVault(vaultId: string): Promise<PendingRestore[]> {
+  try {
+    return await invoke('get_pending_restores_for_vault', { vaultId });
+  } catch (e) {
+    throw new Error(String(e));
+  }
+}

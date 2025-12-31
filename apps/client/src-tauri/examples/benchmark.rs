@@ -67,6 +67,8 @@ struct BenchmarkResult {
     output_extension: String,
     /// Input bitrate in kbps (for video passthrough analysis)
     input_bitrate_kbps: Option<u32>,
+    /// Sample category: "Synthetic", "Real", or "Edge"
+    sample_category: String,
 }
 
 /// Extract bitrate from video file using ffprobe
@@ -186,6 +188,17 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
         } else {
             "Compressed".to_string()
         };
+        
+        // Categorize sample by filename prefix
+        let sample_category = if file_name.starts_with("synth_") {
+            "Synthetic".to_string()
+        } else if file_name.starts_with("edge_") {
+            "Edge".to_string()
+        } else if file_name.starts_with("real_") {
+            "Real".to_string()
+        } else {
+            "Unknown".to_string()
+        };
 
         results.push(BenchmarkResult {
             file_name: file_name.clone(),
@@ -199,6 +212,7 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             input_extension: input_ext,
             output_extension: output_ext,
             input_bitrate_kbps: input_bitrate,
+            sample_category,
         });
     }
 
@@ -208,16 +222,62 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
 fn generate_report(results: &[BenchmarkResult]) -> String {
     let mut report = String::new();
     report.push_str("# Compression Benchmark & Cost Analysis Report\n\n");
+    
+    // Separate results by category
+    let synthetic: Vec<_> = results.iter().filter(|r| r.sample_category == "Synthetic").collect();
+    let real: Vec<_> = results.iter().filter(|r| r.sample_category == "Real").collect();
+    let edge: Vec<_> = results.iter().filter(|r| r.sample_category == "Edge").collect();
+    let unknown: Vec<_> = results.iter().filter(|r| r.sample_category == "Unknown").collect();
+    
+    // Dataset summary
+    report.push_str("## Dataset Summary\n\n");
+    report.push_str("| Category | Files | Purpose |\n");
+    report.push_str("|---|---|---|\n");
+    report.push_str(&format!("| Synthetic | {} | Codec/format validation |\n", synthetic.len()));
+    report.push_str(&format!("| Real | {} | **Realistic compression ratios** |\n", real.len()));
+    report.push_str(&format!("| Edge | {} | Stress testing (long videos) |\n", edge.len()));
+    if !unknown.is_empty() {
+        report.push_str(&format!("| ⚠️ Unknown | {} | Unrecognized prefix |\n", unknown.len()));
+    }
+    report.push_str("\n");
 
-    report.push_str("## Processing Metrics\n\n");
+    // === SYNTHETIC TEST RESULTS ===
+    if !synthetic.is_empty() {
+        report.push_str("## Synthetic Test Results (Codec Validation)\n\n");
+        report.push_str("<details>\n<summary>Click to expand synthetic file results</summary>\n\n");
+        report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time |\n");
+        report.push_str("|---|---|---|---|---|---|---|---|\n");
+        
+        for r in &synthetic {
+            report.push_str(&format!(
+                "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
+                r.file_name,
+                r.media_type,
+                r.status,
+                format_size(r.original_size_bytes),
+                format_size(r.compressed_size_bytes),
+                r.output_extension,
+                r.compression_ratio * 100.0,
+                format_size(r.thumbnail_size_bytes),
+                r.processing_time_ms,
+            ));
+        }
+        report.push_str("\n</details>\n\n");
+    }
+
+    // === REAL SAMPLE RESULTS (Main Data) ===
+    report.push_str("## Real Sample Results (Cost Projection Basis)\n\n");
     report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time | Bitrate |\n");
     report.push_str("|---|---|---|---|---|---|---|---|---|\n");
 
-    let mut total_orig = 0;
-    let mut total_comp = 0;
-    let mut total_thumb = 0;
+    let mut real_orig = 0u64;
+    let mut real_comp = 0u64;
+    let mut real_thumb = 0u64;
+    let mut real_av_orig = 0u64;
+    let mut real_img_orig = 0u64;
+    let mut real_img_comp = 0u64;
 
-    for r in results {
+    for r in &real {
         let bitrate_str = r.input_bitrate_kbps
             .map(|b| format!("{}kbps", b))
             .unwrap_or_else(|| "-".to_string());
@@ -236,33 +296,73 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             bitrate_str
         ));
 
-
-        total_orig += r.original_size_bytes;
-        total_comp += r.compressed_size_bytes;
-        total_thumb += r.thumbnail_size_bytes;
-    }
-
-    report.push_str("\n## Cost Projection (1 TB Library)\n\n");
-
-    // Separation for Mobile Analysis
-    let mut total_av_orig = 0;
-    let mut total_img_orig = 0;
-    let mut total_img_comp = 0;
-
-    for r in results {
+        real_orig += r.original_size_bytes;
+        real_comp += r.compressed_size_bytes;
+        real_thumb += r.thumbnail_size_bytes;
+        
         if r.media_type == "Video" || r.media_type == "Audio" {
-            total_av_orig += r.original_size_bytes;
+            real_av_orig += r.original_size_bytes;
         } else {
-            total_img_orig += r.original_size_bytes;
-            total_img_comp += r.compressed_size_bytes;
+            real_img_orig += r.original_size_bytes;
+            real_img_comp += r.compressed_size_bytes;
         }
     }
 
-    let img_ratio = if total_img_orig > 0 { total_img_comp as f64 / total_img_orig as f64 } else { 1.0 };
-    let overall_ratio = total_comp as f64 / total_orig as f64;
-    let thumb_ratio = total_thumb as f64 / total_orig as f64;
+    // === EDGE CASE RESULTS ===
+    if !edge.is_empty() {
+        report.push_str("\n## Edge Case Results (Stress Testing)\n\n");
+        report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time | Bitrate |\n");
+        report.push_str("|---|---|---|---|---|---|---|---|---|\n");
+        
+        for r in &edge {
+            let bitrate_str = r.input_bitrate_kbps
+                .map(|b| format!("{}kbps", b))
+                .unwrap_or_else(|| "-".to_string());
+                
+            report.push_str(&format!(
+                "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms | {} |\n",
+                r.file_name,
+                r.media_type,
+                r.status,
+                format_size(r.original_size_bytes),
+                format_size(r.compressed_size_bytes),
+                r.output_extension,
+                r.compression_ratio * 100.0,
+                format_size(r.thumbnail_size_bytes),
+                r.processing_time_ms,
+                bitrate_str
+            ));
+        }
+    }
 
-    report.push_str(&format!("Based on average compression ratio of **{:.2}%**:\n\n", overall_ratio * 100.0));
+    // === COST PROJECTION (Based on REAL samples only) ===
+    report.push_str("\n---\n\n## Cost Projection (1 TB Library)\n\n");
+    
+    if real.is_empty() {
+        report.push_str("> ⚠️ **WARNING**: No real samples found! Cost projection will be inaccurate.\n");
+        report.push_str("> Please run `.ci-fixtures/generate.sh` to download realistic test data.\n\n");
+        return report;
+    }
+
+    let img_ratio = if real_img_orig > 0 { real_img_comp as f64 / real_img_orig as f64 } else { 1.0 };
+    let overall_ratio = real_comp as f64 / real_orig as f64;
+    let thumb_ratio = real_thumb as f64 / real_orig as f64;
+    
+    let av_fraction = real_av_orig as f64 / real_orig as f64;
+    let img_fraction = real_img_orig as f64 / real_orig as f64;
+
+    // Validate dataset realism (target: 65% AV, 33% Images by storage)
+    let av_target = 0.65;
+    let img_target = 0.33;
+    let av_deviation = (av_fraction - av_target).abs();
+    let img_deviation = (img_fraction - img_target).abs();
+    
+    if av_deviation > 0.15 || img_deviation > 0.15 {
+        report.push_str("> ⚠️ **Dataset Composition Warning**: The test dataset may not accurately reflect typical photo libraries.\n");
+        report.push_str(&format!("> Expected ~65% Video/Audio, ~33% Images. Got {:.1}% and {:.1}%.\n\n", av_fraction * 100.0, img_fraction * 100.0));
+    }
+
+    report.push_str(&format!("Based on **{}** real samples with average compression ratio of **{:.2}%**:\n\n", real.len(), overall_ratio * 100.0));
 
     // Desktop Scenario
     let source_tb = 1.0;
@@ -270,14 +370,25 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     let thumbs_gb = source_tb * 1024.0 * thumb_ratio;
     
     // Mobile Scenario (AV not compressed)
-    // Assume library distribution matches fixture distribution
-    let av_fraction = total_av_orig as f64 / total_orig as f64;
-    let img_fraction = total_img_orig as f64 / total_orig as f64;
-    
-    // Mobile Compressed Size = (1TB * img_fraction * img_ratio) + (1TB * av_fraction * 1.0)
     let compressed_gb_mobile = (source_tb * 1024.0 * img_fraction * img_ratio) + (source_tb * 1024.0 * av_fraction);
 
-    report.push_str("### Storage Requirements (1 TB source)\n");
+    report.push_str("### Dataset Composition (Real Samples)\n\n");
+    report.push_str("| Metric | Value | Target | Status |\n");
+    report.push_str("|---|---|---|---|\n");
+    report.push_str(&format!("| Video/Audio | {:.1}% | ~65% | {} |\n", 
+        av_fraction * 100.0, 
+        if av_deviation <= 0.15 { "✅" } else { "⚠️" }
+    ));
+    report.push_str(&format!("| Images | {:.1}% | ~33% | {} |\n", 
+        img_fraction * 100.0,
+        if img_deviation <= 0.15 { "✅" } else { "⚠️" }
+    ));
+    report.push_str(&format!("| Image Compression | {:.1}% | 20-40% | {} |\n\n", 
+        img_ratio * 100.0,
+        if img_ratio >= 0.15 && img_ratio <= 0.50 { "✅" } else { "⚠️" }
+    ));
+
+    report.push_str("### Storage Requirements (1 TB source)\n\n");
     report.push_str("| Strategy | Compressed Size | Thumbnails | Total Stored |\n");
     report.push_str("|---|---|---|---|\n");
     report.push_str(&format!("| **Desktop (Full Compression)** | {:.2} GB | {:.2} GB | {:.2} GB |\n", compressed_gb_desktop, thumbs_gb, compressed_gb_desktop + thumbs_gb));
@@ -296,7 +407,8 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals in DA ($0.99/TB), Thumbs in Std |\n", da_cost_desktop, da_cost_mobile));
     report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals in IR ($4.00/TB), Thumbs in Std |\n", ir_cost_desktop, ir_cost_mobile));
 
-    report.push_str("\n> Note: Mobile clients upload Video/Audio originals uncompressed to save battery/heat and also due to architectural limitations, but still compress Images.\n");
+    report.push_str("\n> **Note**: Mobile clients upload Video/Audio originals uncompressed to save battery/heat, but still compress Images.\n");
+    report.push_str("\n> **Methodology**: Cost projections are calculated from `real_*` prefixed samples only (not synthetic test files).\n");
     report
 }
 
@@ -324,47 +436,87 @@ fn extract_simulation_frames(path: &Path) -> Result<Vec<Vec<u8>>> {
         .output()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     
-    // Parse Duration: 00:00:00.00
-    let duration_line = stderr.lines().find(|l| l.trim().starts_with("Duration:")).unwrap_or("");
-    let duration_str = duration_line.split(',').next().unwrap_or("").replace("Duration: ", "").trim().to_string();
-    
-    let parts: Vec<&str> = duration_str.split(':').collect();
+    // Improved Duration Parsing
     let mut duration_sec = 0.0;
-    if parts.len() == 3 { // HH:MM:SS.mm
-       let h: f64 = parts[0].parse().unwrap_or(0.0);
-       let m: f64 = parts[1].parse().unwrap_or(0.0);
-       let s: f64 = parts[2].parse().unwrap_or(0.0);
-       duration_sec = h * 3600.0 + m * 60.0 + s;
+    for line in stderr.lines() {
+        let line = line.trim();
+        if line.starts_with("Duration:") {
+            if let Some(time_str) = line.split(',').next().and_then(|s| s.strip_prefix("Duration: ")) {
+                let parts: Vec<&str> = time_str.trim().split(':').collect();
+                if parts.len() == 3 {
+                    let h: f64 = parts[0].parse().unwrap_or(0.0);
+                    let m: f64 = parts[1].parse().unwrap_or(0.0);
+                    let s: f64 = parts[2].parse().unwrap_or(0.0);
+                    duration_sec = h * 3600.0 + m * 60.0 + s;
+                    break;
+                }
+            }
+        }
     }
 
     if duration_sec <= 0.0 {
-        // Fallback for very short or unparsable videos
+        log::warn!("Could not parse duration for {:?}, defaulting to 1.0s. Stderr sample: {:.100}...", path, stderr);
         duration_sec = 1.0; 
     }
 
-    // 2. Extract 6 frames
-    let count = 6;
-    let interval = duration_sec / count as f64;
+    // 2. Extract frames (Matching Logic from MultipleFileUploader.tsx)
+    // const count = Math.min(8, Math.max(2, Math.floor(duration / 2)));
+    let count = (duration_sec / 2.0).floor() as usize;
+    let count = count.max(2).min(8);
+
+    // const startOffset = Math.min(0.5, duration * 0.05);
+    let start_offset = 0.5f64.min(duration_sec * 0.05);
+    // const endBuffer = 0.5;
+    let end_buffer = 0.5;
+
+    // const safeDuration = Math.max(0, duration - startOffset - endBuffer);
+    let safe_duration = (duration_sec - start_offset - end_buffer).max(0.0);
+    
+    // const interval = count > 1 ? safeDuration / (count - 1) : 0;
+    let interval = if count > 1 { safe_duration / (count as f64 - 1.0) } else { 0.0 };
+
     let mut frames = Vec::new();
+    let temp_dir = env::temp_dir();
+
+    log::info!("Extracting {} frames for {:?} (duration: {:.2}s)", count, file_name, duration_sec);
 
     for i in 0..count {
-        let timestamp = interval * i as f64;
+        // const seekTime = Math.min(startOffset + (i * interval), duration - 0.1);
+        let timestamp = (start_offset + (i as f64 * interval)).min(duration_sec - 0.1).max(0.0);
+        
+        let temp_frame_path = temp_dir.join(format!("frame_{}_{}.jpg", file_name, i));
+        
         let output = std::process::Command::new("ffmpeg")
             .args(&[
                 "-ss", &format!("{:.3}", timestamp),
                 "-i", path.to_str().unwrap(),
                 "-vframes", "1",
                 "-f", "image2",
-                "-c:v", "mjpeg", // Export as JPEG like frontend
-                "-pipe:1"
+                "-c:v", "mjpeg",
+                "-q:v", "3", // q:v 3 is roughly jpeg quality 80 (frontend uses 0.8)
+                "-y",
+                temp_frame_path.to_str().unwrap()
             ])
             .output()?;
         
         if output.status.success() {
-             frames.push(output.stdout);
+             if let Ok(bytes) = fs::read(&temp_frame_path) {
+                 if !bytes.is_empty() {
+                     frames.push(bytes);
+                 }
+             }
+             let _ = fs::remove_file(&temp_frame_path);
         } else {
-             log::warn!("Failed to extract frame at {}s", timestamp);
+             let err_msg = String::from_utf8_lossy(&output.stderr);
+             log::warn!("Failed to extract frame at {}s for {:?}: {}", timestamp, file_name, err_msg);
         }
+    }
+
+    if frames.is_empty() {
+        log::warn!("No frames extracted for {:?}. Thumbnail will be empty.", path);
+        return Err(anyhow::anyhow!("No frames extracted"));
+    } else {
+        log::info!("Extracted {} frames for {:?}", frames.len(), file_name);
     }
 
     Ok(frames)

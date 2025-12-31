@@ -70,7 +70,17 @@ export default function Gallery() {
 
       // Load thumbnails
       const BATCH_SIZE = 10;
-      const imageVideoPhotos = list.filter(p => (p.media_type || 'image') !== 'audio');
+      const imageVideoPhotos = list.filter(p => {
+        // Aggressive check: If extension is audio, exclude it regardless of media_type
+        // This handles cases where media_type might be incorrectly set to 'image' for audio files
+        const ext = p.filename.split('.').pop()?.toLowerCase();
+        if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'aiff', 'aac'].includes(ext || '')) return false;
+
+        // Also check explicit media_type
+        if (p.media_type === 'audio') return false;
+
+        return true;
+      });
 
       for (let i = 0; i < imageVideoPhotos.length; i += BATCH_SIZE) {
         const batch = imageVideoPhotos.slice(i, i + BATCH_SIZE);
@@ -280,7 +290,8 @@ export default function Gallery() {
         lens_model: p.lens_model,
         iso: p.iso,
         f_number: p.f_number,
-        exposure_time: p.exposure_time
+        exposure_time: p.exposure_time,
+        media_type: p.media_type, // Critical for video detection in lightbox
       }));
   }, [sortedPhotos, activeVault]);
 

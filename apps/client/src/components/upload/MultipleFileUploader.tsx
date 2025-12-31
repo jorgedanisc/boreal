@@ -310,25 +310,28 @@ export function MultipleFileUploader() {
 
   // Tauri native drag-drop event listeners
   useEffect(() => {
-    let unlistenDrop: UnlistenFn | undefined;
-    let unlistenEnter: UnlistenFn | undefined;
-    let unlistenLeave: UnlistenFn | undefined;
+    const unlisteners: UnlistenFn[] = [];
+    let isMounted = true;
 
     const setupListeners = async () => {
       // Listen for drag enter
-      unlistenEnter = await listen<DragDropPayload>('tauri://drag-enter', (_event) => {
+      const u1 = await listen<DragDropPayload>('tauri://drag-enter', (_event) => {
         if (!isProcessing) {
           setIsDragging(true);
         }
       });
+      if (!isMounted) { u1(); return; }
+      unlisteners.push(u1);
 
       // Listen for drag leave
-      unlistenLeave = await listen('tauri://drag-leave', () => {
+      const u2 = await listen('tauri://drag-leave', () => {
         setIsDragging(false);
       });
+      if (!isMounted) { u2(); return; }
+      unlisteners.push(u2);
 
       // Listen for drop
-      unlistenDrop = await listen<DragDropPayload>('tauri://drag-drop', async (event) => {
+      const u3 = await listen<DragDropPayload>('tauri://drag-drop', async (event) => {
         setIsDragging(false);
 
         if (isProcessing) {
@@ -365,14 +368,15 @@ export function MultipleFileUploader() {
           toast.success(`Added ${paths.length} item${paths.length > 1 ? 's' : ''}`);
         }
       });
+      if (!isMounted) { u3(); return; }
+      unlisteners.push(u3);
     };
 
     setupListeners();
 
     return () => {
-      unlistenDrop?.();
-      unlistenEnter?.();
-      unlistenLeave?.();
+      isMounted = false;
+      unlisteners.forEach(fn => fn());
     };
   }, [isProcessing, addFiles]);
 

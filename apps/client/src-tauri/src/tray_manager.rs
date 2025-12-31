@@ -373,6 +373,7 @@ mod desktop {
             }
         }
 
+        #[allow(dead_code)]
         async fn update_tooltip_and_menu(
             &self,
             progress: f64,
@@ -388,6 +389,7 @@ mod desktop {
         }
 
         /// Advance animation frame (call periodically during upload)
+        #[allow(dead_code)]
         pub async fn tick_animation(&self) -> Result<(), Box<dyn std::error::Error>> {
             let mut state = self.state.write().await;
             if state.is_processing {

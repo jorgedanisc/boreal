@@ -60,10 +60,22 @@ jobs:
           key: ${{ runner.os }}-cargo-benchmark-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-benchmark-
+      - name: Restore fixtures cache
+        uses: actions/cache/restore@v4
+        id: fixtures-cache
+        with:
+          path: .ci-fixtures/out
+          key: fixtures-${{ hashFiles('.ci-fixtures/generate.sh') }}
       - name: Generate Fixtures
         run: |
           chmod +x .ci-fixtures/generate.sh
           bash .ci-fixtures/generate.sh .ci-fixtures/out
+      - name: Save fixtures cache
+        if: steps.fixtures-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-fixtures/out
+          key: fixtures-${{ hashFiles('.ci-fixtures/generate.sh') }}
       - name: Run Compression Benchmark
         working-directory: apps/client/src-tauri
         run: |

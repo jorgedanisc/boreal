@@ -13,6 +13,7 @@ import { Route as VaultsRouteImport } from './routes/vaults'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as ScanRouteImport } from './routes/scan'
+import { Route as PendingDownloadsRouteImport } from './routes/pending-downloads'
 import { Route as PairingRouteImport } from './routes/pairing'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as ImportRouteImport } from './routes/import'
@@ -41,6 +42,11 @@ const SearchRoute = SearchRouteImport.update({
 const ScanRoute = ScanRouteImport.update({
   id: '/scan',
   path: '/scan',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PendingDownloadsRoute = PendingDownloadsRouteImport.update({
+  id: '/pending-downloads',
+  path: '/pending-downloads',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairingRoute = PairingRouteImport.update({
@@ -95,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/import': typeof ImportRoute
   '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
+  '/pending-downloads': typeof PendingDownloadsRoute
   '/scan': typeof ScanRoute
   '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/import': typeof ImportRoute
   '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
+  '/pending-downloads': typeof PendingDownloadsRoute
   '/scan': typeof ScanRoute
   '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/import': typeof ImportRoute
   '/map': typeof MapRoute
   '/pairing': typeof PairingRoute
+  '/pending-downloads': typeof PendingDownloadsRoute
   '/scan': typeof ScanRoute
   '/search': typeof SearchRoute
   '/setup': typeof SetupRoute
@@ -142,6 +151,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/map'
     | '/pairing'
+    | '/pending-downloads'
     | '/scan'
     | '/search'
     | '/setup'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/map'
     | '/pairing'
+    | '/pending-downloads'
     | '/scan'
     | '/search'
     | '/setup'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/map'
     | '/pairing'
+    | '/pending-downloads'
     | '/scan'
     | '/search'
     | '/setup'
@@ -187,6 +199,7 @@ export interface RootRouteChildren {
   ImportRoute: typeof ImportRoute
   MapRoute: typeof MapRoute
   PairingRoute: typeof PairingRoute
+  PendingDownloadsRoute: typeof PendingDownloadsRoute
   ScanRoute: typeof ScanRoute
   SearchRoute: typeof SearchRoute
   SetupRoute: typeof SetupRoute
@@ -222,6 +235,13 @@ declare module '@tanstack/react-router' {
       path: '/scan'
       fullPath: '/scan'
       preLoaderRoute: typeof ScanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pending-downloads': {
+      id: '/pending-downloads'
+      path: '/pending-downloads'
+      fullPath: '/pending-downloads'
+      preLoaderRoute: typeof PendingDownloadsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pairing': {
@@ -311,6 +331,7 @@ const rootRouteChildren: RootRouteChildren = {
   ImportRoute: ImportRoute,
   MapRoute: MapRoute,
   PairingRoute: PairingRoute,
+  PendingDownloadsRoute: PendingDownloadsRoute,
   ScanRoute: ScanRoute,
   SearchRoute: SearchRoute,
   SetupRoute: SetupRoute,
