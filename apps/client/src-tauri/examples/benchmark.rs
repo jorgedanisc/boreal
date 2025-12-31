@@ -59,6 +59,10 @@ struct BenchmarkResult {
     thumbnail_size_bytes: u64,
     compression_ratio: f64,
     processing_time_ms: u128,
+    /// Status: "Compressed", "Passthrough", or "Skipped"
+    status: String,
+    /// Output extension (to verify format was preserved or changed)
+    output_extension: String,
 }
 
 /// Recursively find relevant files in the directory
@@ -132,6 +136,24 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
         let input_size = fs::metadata(&path)?.len();
         let compressed_size = processed.original.len() as u64;
         let thumbnail_size = processed.thumbnail.map(|t| t.len() as u64).unwrap_or(0);
+        let ratio = compressed_size as f64 / input_size as f64;
+        
+        // Determine status based on extension and ratio
+        let output_ext = processed.original_extension.clone();
+        let input_ext = ext.clone();
+        
+        let status = if media_type == "Image" {
+            // Images always get compressed to WebP
+            "Compressed".to_string()
+        } else if input_ext == output_ext {
+            // Same extension = passthrough
+            "Passthrough".to_string()
+        } else if ratio >= 1.0 {
+            // Inflated but transcoded (shouldn't happen with new logic)
+            "⚠ Inflated".to_string()
+        } else {
+            "Compressed".to_string()
+        };
 
         results.push(BenchmarkResult {
             file_name: file_name.clone(),
@@ -139,8 +161,10 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             original_size_bytes: input_size,
             compressed_size_bytes: compressed_size,
             thumbnail_size_bytes: thumbnail_size,
-            compression_ratio: compressed_size as f64 / input_size as f64,
+            compression_ratio: ratio,
             processing_time_ms: duration.as_millis(),
+            status,
+            output_extension: output_ext,
         });
     }
 
@@ -152,8 +176,8 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str("# Compression Benchmark & Cost Analysis Report\n\n");
 
     report.push_str("## Processing Metrics\n\n");
-    report.push_str("| File | Type | Original | Compressed | Ratio | Thumb | Time |\n");
-    report.push_str("|---|---|---|---|---|---|---|\n");
+    report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time |\n");
+    report.push_str("|---|---|---|---|---|---|---|---|\n");
 
     let mut total_orig = 0;
     let mut total_comp = 0;
@@ -161,15 +185,18 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
 
     for r in results {
         report.push_str(&format!(
-            "| {} | {} | {} | {} | {:.2}% | {} | {}ms |\n",
+            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
             r.file_name,
             r.media_type,
+            r.status,
             format_size(r.original_size_bytes),
             format_size(r.compressed_size_bytes),
+            r.output_extension,
             r.compression_ratio * 100.0,
             format_size(r.thumbnail_size_bytes),
             r.processing_time_ms
         ));
+
         total_orig += r.original_size_bytes;
         total_comp += r.compressed_size_bytes;
         total_thumb += r.thumbnail_size_bytes;

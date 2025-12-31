@@ -798,8 +798,10 @@ impl UploadManager {
                 .await;
                 let enc_original = crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
 
-                let extension = "opus";
+                // Use dynamic extension from processor (supports passthrough formats like .mp3, .ogg)
+                let extension = &processed.original_extension;
                 let original_key = format!("audio/{}.{}", id, extension);
+
 
                 (original_key, None, enc_original, None, 0, 0, None)
             }

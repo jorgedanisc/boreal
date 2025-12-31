@@ -12,7 +12,59 @@ use image::GenericImageView;
 /// Maximum dimension for thumbnails (either width or height)
 const THUMBNAIL_MAX_DIM: u32 = 720;
 
+/// Passthrough threshold: if compressed >= this % of original, use original (for video/audio only)
+const PASSTHROUGH_THRESHOLD_PERCENT: f64 = 95.0;
+
+/// Minimum savings required to justify transcoding (in bytes)
+const PASSTHROUGH_MIN_SAVINGS_BYTES: u64 = 50 * 1024; // 50 KB
+
+/// Check if audio format is already compressed and should skip transcoding
+/// Returns true for lossy formats that would inflate if re-encoded
+fn should_skip_audio_transcode(ext: &str) -> bool {
+    matches!(
+        ext.to_lowercase().as_str(),
+        "ogg" | "mp3" | "m4a" | "aac" | "opus" | "wma"
+    )
+}
+
+/// Determine if we should use passthrough based on size comparison (for video/audio)
+/// Returns Some(reason) if passthrough should be used, None if transcoding is worthwhile
+fn should_passthrough(original_size: u64, compressed_size: u64) -> Option<String> {
+    // Case 1: Inflation - compressed is larger than original
+    if compressed_size >= original_size {
+        return Some(format!(
+            "would inflate {}% ({} -> {} bytes)",
+            ((compressed_size as f64 / original_size as f64) * 100.0 - 100.0) as i32,
+            original_size,
+            compressed_size
+        ));
+    }
+
+    // Case 2: Insufficient savings
+    let savings = original_size - compressed_size;
+    if savings < PASSTHROUGH_MIN_SAVINGS_BYTES {
+        return Some(format!(
+            "savings too small ({} bytes, threshold {})",
+            savings,
+            PASSTHROUGH_MIN_SAVINGS_BYTES
+        ));
+    }
+
+    // Case 3: Ratio above threshold
+    let ratio = (compressed_size as f64 / original_size as f64) * 100.0;
+    if ratio >= PASSTHROUGH_THRESHOLD_PERCENT {
+        return Some(format!(
+            "ratio {:.1}% above threshold {:.0}%",
+            ratio,
+            PASSTHROUGH_THRESHOLD_PERCENT
+        ));
+    }
+
+    None // Transcoding is worthwhile
+}
+
 /// Result of processing any media file
+
 pub struct ProcessedMedia {
     /// Encoded original file bytes
     pub original: Vec<u8>,
@@ -391,11 +443,41 @@ pub async fn process_video(
         }
     };
 
-    // 2. Transcode Video (Platform Specific)
+    // 2. Transcode Video (Platform Specific) with passthrough heuristic
     #[cfg(desktop)]
     let (original, ext) = {
-        let bytes = transcode_video_h265(transcoder, path, output_path).await?;
-        (bytes, "mp4".to_string())
+        let input_ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4")
+            .to_lowercase();
+
+        // Read original first for size comparison
+        let original_bytes = std::fs::read(path).context("Failed to read video file")?;
+        let original_size = original_bytes.len() as u64;
+
+        // Transcode to H.265
+        let transcoded = transcode_video_h265(transcoder, path, output_path).await?;
+        let transcoded_size = transcoded.len() as u64;
+
+        // Apply passthrough heuristic
+        if let Some(reason) = should_passthrough(original_size, transcoded_size) {
+            log::info!(
+                "[Video] Passthrough: {} (original {} bytes, transcoded {} bytes)",
+                reason,
+                original_size,
+                transcoded_size
+            );
+            (original_bytes, input_ext)
+        } else {
+            log::info!(
+                "[Video] Transcoded: {:.1}% compression ({} -> {} bytes)",
+                (transcoded_size as f64 / original_size as f64) * 100.0,
+                original_size,
+                transcoded_size
+            );
+            (transcoded, "mp4".to_string())
+        }
     };
 
     #[cfg(not(desktop))] // mobile
@@ -409,6 +491,7 @@ pub async fn process_video(
             .to_string();
         (bytes, ext)
     };
+
 
     // Get dimensions if possible (for metadata)
     // On desktop we might have them from FFmpeg. On mobile/desktop we can try to guess or use 0
@@ -468,26 +551,64 @@ async fn generate_thumbnail_ffmpeg(
     res
 }
 
-/// Process an audio file: convert to Opus
+/// Process an audio file: convert to Opus (with format-aware passthrough)
+/// Already compressed formats (.ogg, .mp3, .m4a, .aac) skip transcoding entirely.
+/// Uncompressed formats (.wav, .flac) are transcoded but with passthrough fallback if savings are minimal.
 pub async fn process_audio(
     transcoder: &impl Transcoder,
     path: &Path,
     output_path: &Path,
 ) -> Result<ProcessedMedia> {
+    let input_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
     #[cfg(desktop)]
     let (original, ext) = {
-        let bytes = transcode_audio_opus(transcoder, path, output_path).await?;
-        (bytes, "opus".to_string())
+        // Check if format is already compressed - skip transcoding entirely
+        if should_skip_audio_transcode(&input_ext) {
+            log::info!(
+                "[Audio] Passthrough: {} is already compressed, skipping transcode",
+                input_ext
+            );
+            let bytes = std::fs::read(path).context("Failed to read audio file")?;
+            (bytes, input_ext.clone())
+        } else {
+            // Uncompressed format - transcode but apply passthrough heuristic
+            let original_bytes = std::fs::read(path).context("Failed to read audio file")?;
+            let original_size = original_bytes.len() as u64;
+
+            let transcoded = transcode_audio_opus(transcoder, path, output_path).await?;
+            let transcoded_size = transcoded.len() as u64;
+
+            // Apply passthrough heuristic
+            if let Some(reason) = should_passthrough(original_size, transcoded_size) {
+                log::info!(
+                    "[Audio] Passthrough: {} (original {} bytes, transcoded {} bytes)",
+                    reason,
+                    original_size,
+                    transcoded_size
+                );
+                (original_bytes, input_ext.clone())
+            } else {
+                log::info!(
+                    "[Audio] Transcoded: {:.1}% compression ({} -> {} bytes)",
+                    (transcoded_size as f64 / original_size as f64) * 100.0,
+                    original_size,
+                    transcoded_size
+                );
+                (transcoded, "opus".to_string())
+            }
+        }
     };
 
     #[cfg(not(desktop))]
     let (original, ext) = {
+        // Mobile: always passthrough (no FFmpeg available)
         let bytes = std::fs::read(path).context("Failed to read audio file")?;
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("opus")
-            .to_string();
-        (bytes, ext)
+        (bytes, input_ext)
     };
 
     Ok(ProcessedMedia {
@@ -499,6 +620,7 @@ pub async fn process_audio(
         height: 0,
     })
 }
+
 
 // ============ Helper Functions ============
 

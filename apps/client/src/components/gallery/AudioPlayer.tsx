@@ -26,6 +26,23 @@ export function AudioPlayer({ isOpen, onClose, audioId, filename }: AudioPlayerP
   // Reference to audio element
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
 
+  // Derive MIME type from filename extension
+  const getMimeType = (filename: string): string => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const mimeTypes: { [key: string]: string } = {
+      'ogg': 'audio/ogg',
+      'opus': 'audio/ogg', // Opus in Ogg container
+      'mp3': 'audio/mpeg',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      'wav': 'audio/wav',
+      'flac': 'audio/flac',
+      'wma': 'audio/x-ms-wma',
+      'webm': 'audio/webm',
+    };
+    return mimeTypes[ext] || 'audio/ogg'; // Default fallback
+  };
+
   // Fetch audio on first play
   const loadAudio = useCallback(async () => {
     if (audioSrc) return; // Already loaded
@@ -36,15 +53,17 @@ export function AudioPlayer({ isOpen, onClose, audioId, filename }: AudioPlayerP
     try {
       const base64 = await getAudio(audioId);
       console.log('Audio base64 fetched, length:', base64.length);
-      // Opus audio in Ogg container
-      setAudioSrc(`data:audio/ogg;base64,${base64}`);
+      const mimeType = getMimeType(filename);
+      console.log('Detected MIME type:', mimeType);
+      setAudioSrc(`data:${mimeType};base64,${base64}`);
     } catch (e) {
       console.error('Failed to load audio:', e);
       setError(String(e));
     } finally {
       setIsLoading(false);
     }
-  }, [audioId, audioSrc]);
+  }, [audioId, audioSrc, filename]);
+
 
   // Play/pause toggle
   const togglePlay = useCallback(async () => {
