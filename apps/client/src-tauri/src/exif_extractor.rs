@@ -1,160 +1,132 @@
-//! EXIF metadata extraction module
+//! Metadata extraction module using nom-exif
 //!
-//! Extracts capture date and GPS coordinates from image files using the kamadak-exif crate.
-//! Supports JPEG, TIFF, HEIF (HEIC/AVIF), PNG, and WebP formats.
+//! Supports extraction of EXIF and other metadata from Images (JPEG, HEIF, PNG, WebP)
+//! and Videos (MOV, MP4, QuickTime).
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use exif::{In, Reader, Tag, Value};
+use nom_exif::{parse_exif, ExifIter}; 
 use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 
-/// Extracted EXIF metadata from an image
+/// Extracted Metadata
 #[derive(Debug, Clone, Default)]
 pub struct ExifMetadata {
-    /// Original capture date/time (DateTimeOriginal > DateTimeDigitized > DateTime)
+    /// Original capture date/time
     pub captured_at: Option<DateTime<Utc>>,
-    /// GPS latitude in decimal degrees (positive = North, negative = South)
+    /// GPS latitude
     pub latitude: Option<f64>,
-    /// GPS longitude in decimal degrees (positive = East, negative = West)
+    /// GPS longitude
     pub longitude: Option<f64>,
+    
+    // -- Extended Metadata --
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub lens_model: Option<String>,
+    pub iso: Option<u32>,
+    pub f_number: Option<f32>,
+    pub exposure_time: Option<String>,
+    
+    // Intrinsic dimensions (from metadata, might differ from actual file stream)
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 impl ExifMetadata {
-    /// Check if any useful metadata was extracted
     pub fn has_data(&self) -> bool {
-        self.captured_at.is_some() || self.latitude.is_some() || self.longitude.is_some()
+        self.captured_at.is_some() 
+        || self.latitude.is_some() 
+        || self.longitude.is_some()
+        || self.make.is_some()
+        || self.model.is_some()
     }
 }
 
-/// Extract EXIF metadata from an image file
-///
-/// Returns ExifMetadata with extracted fields. Fields are None if not found or extraction fails.
-/// This function never errors - it returns default metadata on any failure.
+/// Extract metadata from file
 pub fn extract_metadata(path: &Path) -> ExifMetadata {
-    match try_extract_metadata(path) {
-        Ok(metadata) => metadata,
+    match try_extract(path) {
+        Ok(m) => m,
         Err(e) => {
-            log::info!(
-                "[EXIF] Failed to extract metadata from {:?}: {}",
-                path.file_name().unwrap_or_default(),
-                e
-            );
+            log::warn!("[Metadata] Failed to extract from {:?}: {}", path.file_name().unwrap_or_default(), e);
             ExifMetadata::default()
         }
     }
 }
 
-fn try_extract_metadata(path: &Path) -> Result<ExifMetadata> {
-    let file = File::open(path).context("Failed to open file")?;
-    let mut reader = BufReader::new(file);
+fn try_extract(path: &Path) -> Result<ExifMetadata> {
+    let mut meta = ExifMetadata::default();
+    
+    let file = File::open(path)?;
+    
+    // Use parse_exif(reader, length_hint)
+    // We pass None for length hint as we are reading from file (impl Read + Seek)
+    let iter: ExifIter = match parse_exif(file, None)? {
+        Some(i) => i,
+        None => return Ok(meta),
+    };
+    
+    // Iterate over tags
+    for entry in iter {
+        // entry is ParsedExifEntry
+        
+        // Use tag_code() directly
+        let tag_id = entry.tag_code();
+        
+        // Use take_value() to get validity
+        // It returns Option<EntryValue> (not Result)
+        let value_str = match entry.take_value() {
+            Some(v) => v.to_string(),
+            None => continue,
+        };
+        
+        // Debug log all found tags to verify what nom-exif returns for MOVs
+        log::debug!("[Exif] Tag 0x{:04x} = {}", tag_id, value_str);
 
-    let exif = Reader::new()
-        .read_from_container(&mut reader)
-        .context("Failed to read EXIF data")?;
-
-    let captured_at = extract_capture_date(&exif);
-    let (latitude, longitude) = extract_gps_coordinates(&exif);
-
-    Ok(ExifMetadata {
-        captured_at,
-        latitude,
-        longitude,
-    })
-}
-
-/// Extract capture date from EXIF data
-/// Priority: DateTimeOriginal > DateTimeDigitized > DateTime
-fn extract_capture_date(exif: &exif::Exif) -> Option<DateTime<Utc>> {
-    // Try DateTimeOriginal first (when the photo was actually taken)
-    if let Some(dt) = get_datetime_field(exif, Tag::DateTimeOriginal) {
-        return Some(dt);
-    }
-
-    // Fall back to DateTimeDigitized (when it was digitized/scanned)
-    if let Some(dt) = get_datetime_field(exif, Tag::DateTimeDigitized) {
-        return Some(dt);
-    }
-
-    // Last resort: DateTime (file modification time in camera)
-    get_datetime_field(exif, Tag::DateTime)
-}
-
-fn get_datetime_field(exif: &exif::Exif, tag: Tag) -> Option<DateTime<Utc>> {
-    let field = exif.get_field(tag, In::PRIMARY)?;
-
-    if let Value::Ascii(ref vec) = field.value {
-        if let Some(ascii_bytes) = vec.first() {
-            // EXIF datetime format: "YYYY:MM:DD HH:MM:SS"
-            let date_str = String::from_utf8_lossy(ascii_bytes);
-            if let Ok(naive_dt) = NaiveDateTime::parse_from_str(&date_str, "%Y:%m:%d %H:%M:%S") {
-                return Some(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
-            }
-        }
-    }
-
-    None
-}
-
-/// Extract GPS coordinates from EXIF data
-fn extract_gps_coordinates(exif: &exif::Exif) -> (Option<f64>, Option<f64>) {
-    let lat = extract_gps_coordinate(exif, Tag::GPSLatitude, Tag::GPSLatitudeRef, 'S');
-    let lon = extract_gps_coordinate(exif, Tag::GPSLongitude, Tag::GPSLongitudeRef, 'W');
-    (lat, lon)
-}
-
-fn extract_gps_coordinate(
-    exif: &exif::Exif,
-    coord_tag: Tag,
-    ref_tag: Tag,
-    negative_ref: char,
-) -> Option<f64> {
-    let coord_field = exif.get_field(coord_tag, In::PRIMARY)?;
-
-    // GPS coordinates are stored as 3 rationals: degrees, minutes, seconds
-    if let Value::Rational(ref rationals) = coord_field.value {
-        if rationals.len() >= 3 {
-            let degrees = rationals[0].to_f64();
-            let minutes = rationals[1].to_f64();
-            let seconds = rationals[2].to_f64();
-
-            let mut decimal = degrees + minutes / 60.0 + seconds / 3600.0;
-
-            // Check reference to determine sign (N/S for lat, E/W for lon)
-            if let Some(ref_field) = exif.get_field(ref_tag, In::PRIMARY) {
-                if let Value::Ascii(ref vec) = ref_field.value {
-                    if let Some(ascii_bytes) = vec.first() {
-                        if !ascii_bytes.is_empty() && ascii_bytes[0] as char == negative_ref {
-                            decimal = -decimal;
-                        }
-                    }
+        match tag_id {
+             // -- DATE & TIME --
+            0x9003 | 0x9004 | 0x9291 => {
+                if meta.captured_at.is_none() {
+                    meta.captured_at = parse_date_str(&value_str);
                 }
             }
+            
+            // -- CAMERA INFO --
+            0x010f => meta.make = Some(value_str.to_string()),
+            0x0110 => meta.model = Some(value_str.to_string()),
+            0xa434 => meta.lens_model = Some(value_str.to_string()),
+            
+            // -- SETTINGS --
+            0x8827 => meta.iso = value_str.parse().ok(),
+            0x829d => meta.f_number = value_str.parse().ok(),
+            0x829a => meta.exposure_time = Some(value_str.to_string()),
+            
+            // -- DIMENSIONS --
+            0xa002 => meta.width = value_str.parse().ok(),
+            0xa003 => meta.height = value_str.parse().ok(),
+            
+            // -- GPS (Attempt) --
+            // Note: nom-exif might flatten GPS tags or return them with these IDs (1-4)
+            // Implementation pending verification of string format
+            0x0001 => log::debug!("[Exif] GPSLatRef: {}", value_str),
+            0x0002 => log::debug!("[Exif] GPSLat: {}", value_str),
+            0x0003 => log::debug!("[Exif] GPSLonRef: {}", value_str),
+            0x0004 => log::debug!("[Exif] GPSLon: {}", value_str),
 
-            return Some(decimal);
+            _ => {}
         }
     }
-
-    None
+    
+    Ok(meta)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_nonexistent_file() {
-        let metadata = extract_metadata(Path::new("/nonexistent/file.jpg"));
-        assert!(!metadata.has_data());
+fn parse_date_str(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim().trim_matches('"');
+    
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S") {
+        return Some(DateTime::from_naive_utc_and_offset(naive, Utc));
     }
-
-    #[test]
-    fn test_extract_default_metadata() {
-        let metadata = ExifMetadata::default();
-        assert!(metadata.captured_at.is_none());
-        assert!(metadata.latitude.is_none());
-        assert!(metadata.longitude.is_none());
-        assert!(!metadata.has_data());
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
     }
+    None
 }

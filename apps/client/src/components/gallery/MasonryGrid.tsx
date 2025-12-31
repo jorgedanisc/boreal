@@ -5,12 +5,22 @@ import { useResizeObserver } from 'usehooks-ts';
 
 export interface MediaItem {
   id: string;
-  src: string; // Thumbnail URL (base64 or empty for audio)
+  src: string; // Thumbnail URL (base64 or empty for audio, or empty for header)
   width: number;
   height: number;
   alt: string;
-  mediaType: 'image' | 'video' | 'audio';
+  mediaType: 'image' | 'video' | 'audio' | 'header';
   capturedAt?: string; // ISO date string for timeline grouping
+  isUnknown?: boolean;
+}
+
+export interface LayoutItem {
+  item: MediaItem;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  globalIndex: number;
 }
 
 interface VirtualizedMasonryGridProps {
@@ -34,14 +44,69 @@ const MAX_COLUMNS = 8;
 // CSS transition duration for smooth zooming
 const TRANSITION_DURATION = '0.3s';
 
-export interface LayoutItem {
+/**
+ * Memoized grid item
+ */
+const GridItem = memo(function GridItem({
+  item,
+  renderedWidth,
+  onClick
+}: {
   item: MediaItem;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  globalIndex: number;
-}
+  renderedWidth: number;
+  onClick: () => void;
+}) {
+  if (item.mediaType === 'header') {
+    return (
+      <div className="w-full h-full flex items-end pb-2 px-2" onClick={onClick}>
+        <h2 className="text-xl">
+          {item.alt}
+        </h2>
+      </div>
+    );
+  }
+
+  if (item.mediaType === 'audio') {
+    // Responsive check: if small, show simplified view
+    const isSmall = renderedWidth < 120;
+    return (
+      <div
+        className="w-full h-full bg-muted/30 border border-border flex items-center justify-center group hover:bg-muted/50 cursor-pointer overflow-hidden transition-colors rounded-md"
+        onClick={onClick}
+      >
+        <div className="text-center p-2 w-full flex flex-col items-center justify-center h-full">
+          <div className={`bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform rounded-full ${isSmall ? 'w-10 h-10' : 'w-12 h-12 mb-2'}`}>
+            <AudioLinesIcon className={`${isSmall ? 'w-5 h-5' : 'w-6 h-6'} text-primary`} />
+          </div>
+          {!isSmall && (
+            <span className="text-xs font-medium text-muted-foreground truncate w-full block px-1">
+              {item.alt}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="w-full h-full relative cursor-pointer overflow-hidden group bg-muted rounded-md"
+      onClick={onClick}
+    >
+      {item.src ? (
+        <img
+          src={item.src}
+          alt={item.alt}
+          className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div className="w-full h-full bg-muted animate-pulse absolute inset-0" />
+      )}
+    </div>
+  );
+});
 
 /**
  * Virtualized Masonry Grid
@@ -88,32 +153,33 @@ export function VirtualizedMasonryGrid({
     let currentY = 0;
     let currentRowWidth = 0;
 
-    items.forEach((item, globalIndex) => {
-      const w = item.width > 0 ? item.width : 1;
-      const h = item.height > 0 ? item.height : 1;
-      const ratio = item.mediaType === 'audio' ? 1 : (w / h);
+    const finalizeRow = (rowItems: typeof currentRow, isLastRow: boolean) => {
+      if (rowItems.length === 0) return;
 
-      const widthAtTarget = targetRowHeight * ratio;
-
-      currentRow.push({ item, globalIndex, ratio, widthAtTarget });
-      currentRowWidth += widthAtTarget;
-
-      // Check if we interpret the row as full
-      // We check if the width (plus spacings) is >= containerWidth
-      const rowGap = (currentRow.length - 1) * spacing;
-      if (currentRowWidth + rowGap >= containerWidth) {
-        // Finalize row
-        // Calculate exact height to fill containerWidth
-        // containerWidth = sum(widths) + gaps
-        // containerWidth = h * sum(ratios) + gaps
-        // h = (containerWidth - gaps) / sum(ratios)
-
-        const sumRatios = currentRow.reduce((sum, it) => sum + it.ratio, 0);
-        // Ensure we don't divide by zero or have weird behavior
+      if (isLastRow) {
+        // Handle remaining items (Last row) - Align left, don't stretch
+        let currentX = 0;
+        rowItems.forEach((rowItem) => {
+          const itemWidth = rowItem.widthAtTarget;
+          fullLayout.push({
+            item: rowItem.item,
+            x: currentX,
+            y: currentY,
+            width: itemWidth,
+            height: targetRowHeight,
+            globalIndex: rowItem.globalIndex
+          });
+          currentX += itemWidth + spacing;
+        });
+        currentY += targetRowHeight + spacing;
+      } else {
+        // Finalize full row
+        const rowGap = (rowItems.length - 1) * spacing;
+        const sumRatios = rowItems.reduce((sum, it) => sum + it.ratio, 0);
         const finalRowHeight = (containerWidth - rowGap) / sumRatios;
 
         let currentX = 0;
-        currentRow.forEach((rowItem) => {
+        rowItems.forEach((rowItem) => {
           const itemWidth = finalRowHeight * rowItem.ratio;
           fullLayout.push({
             item: rowItem.item,
@@ -127,30 +193,52 @@ export function VirtualizedMasonryGrid({
         });
 
         currentY += finalRowHeight + spacing;
+      }
+    };
+
+    items.forEach((item, globalIndex) => {
+      // HEADER HANDLING
+      if (item.mediaType === 'header') {
+        // 1. Finalize current row if any
+        finalizeRow(currentRow, true); // Treat as last row (left align) to avoid stretching few items above header
+        currentRow = [];
+        currentRowWidth = 0;
+
+        // 2. Add Header Item
+        const headerHeight = 60; // Fixed header height
+        fullLayout.push({
+          item,
+          x: 0,
+          y: currentY,
+          width: containerWidth,
+          height: headerHeight,
+          globalIndex
+        });
+        currentY += headerHeight + spacing;
+        return;
+      }
+
+      // NORMAL ITEM HANDLING
+      const w = item.width > 0 ? item.width : 1;
+      const h = item.height > 0 ? item.height : 1;
+      const ratio = item.mediaType === 'audio' ? 1 : (w / h);
+
+      const widthAtTarget = targetRowHeight * ratio;
+
+      currentRow.push({ item, globalIndex, ratio, widthAtTarget });
+      currentRowWidth += widthAtTarget;
+
+      // Check if we interpret the row as full
+      const rowGap = (currentRow.length - 1) * spacing;
+      if (currentRowWidth + rowGap >= containerWidth) {
+        finalizeRow(currentRow, false);
         currentRow = [];
         currentRowWidth = 0;
       }
     });
 
     // Handle remaining items (Last row)
-    // We don't stretch them, we just keep targetRowHeight and align left
-    if (currentRow.length > 0) {
-      let currentX = 0;
-      currentRow.forEach((rowItem) => {
-        // Use target height
-        const itemWidth = rowItem.widthAtTarget;
-        fullLayout.push({
-          item: rowItem.item,
-          x: currentX,
-          y: currentY,
-          width: itemWidth,
-          height: targetRowHeight,
-          globalIndex: rowItem.globalIndex
-        });
-        currentX += itemWidth + spacing;
-      });
-      currentY += targetRowHeight + spacing;
-    }
+    finalizeRow(currentRow, true);
 
     return {
       layout: fullLayout,
@@ -314,6 +402,7 @@ export function VirtualizedMasonryGrid({
             >
               <GridItem
                 item={item}
+                renderedWidth={width}
                 onClick={() => onItemClick?.(globalIndex)}
               />
             </div>
@@ -323,54 +412,6 @@ export function VirtualizedMasonryGrid({
     </div>
   );
 }
-
-/**
- * Memoized grid item
- */
-const GridItem = memo(function GridItem({
-  item,
-  onClick
-}: {
-  item: MediaItem;
-  onClick: () => void;
-}) {
-  if (item.mediaType === 'audio') {
-    return (
-      <div
-        className="w-full h-full bg-muted/30 border border-border flex items-center justify-center group hover:bg-muted/50 cursor-pointer overflow-hidden transition-colors"
-        onClick={onClick}
-      >
-        <div className="text-center p-4">
-          <div className="w-12 h-12 bg-primary/10 flex items-center justify-center mx-auto mb-2 group-hover:scale-110 transition-transform">
-            <AudioLinesIcon className="w-6 h-6 text-primary" />
-          </div>
-          <span className="text-xs font-medium text-muted-foreground truncate max-w-[100px] block">
-            {item.alt}
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="w-full h-full relative cursor-pointer overflow-hidden group bg-muted"
-      onClick={onClick}
-    >
-      {item.src ? (
-        <img
-          src={item.src}
-          alt={item.alt}
-          className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-          loading="lazy"
-          decoding="async"
-        />
-      ) : (
-        <div className="w-full h-full bg-muted animate-pulse absolute inset-0" />
-      )}
-    </div>
-  );
-});
 
 // Re-export for backwards compatibility
 export { VirtualizedMasonryGrid as MasonryGrid };

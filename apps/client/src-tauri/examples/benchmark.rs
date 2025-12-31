@@ -177,8 +177,6 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
 
     report.push_str("\n## Cost Projection (1 TB Library)\n\n");
 
-    report.push_str("\n## Cost Projection (1 TB Library)\n\n");
-
     // Separation for Mobile Analysis
     let mut total_av_orig = 0;
     let mut total_img_orig = 0;
@@ -231,7 +229,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals in DA ($0.99/TB), Thumbs in Std |\n", da_cost_desktop, da_cost_mobile));
     report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals in IR ($4.00/TB), Thumbs in Std |\n", ir_cost_desktop, ir_cost_mobile));
 
-    report.push_str("\n> Note: Mobile clients upload Video/Audio originals uncompressed to save battery/heat, but still compress Images.\n");
+    report.push_str("\n> Note: Mobile clients upload Video/Audio originals uncompressed to save battery/heat and also due to architectural limitations, but still compress Images.\n");
     report
 }
 

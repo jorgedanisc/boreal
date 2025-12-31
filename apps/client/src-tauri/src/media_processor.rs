@@ -30,11 +30,15 @@ pub struct ProcessedMedia {
     pub height: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VideoMetadata {
     pub duration_seconds: f64,
     pub width: u32,
     pub height: u32,
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub creation_time: Option<String>,
+    pub location: Option<String>,
 }
 
 /// Initialize FFmpeg (call once at startup)
@@ -120,6 +124,7 @@ impl Transcoder for TauriTranscoder {
 
             // Expect failure (exit code 1) but capture stderr
             let stderr = String::from_utf8_lossy(&output_result.stderr);
+            log::warn!("ffmpeg-stderr: {}", stderr);
             parse_ffmpeg_stderr(&stderr)
         }
     }
@@ -162,64 +167,72 @@ impl Transcoder for SystemTranscoder {
 }
 
 fn parse_ffmpeg_stderr(stderr: &str) -> Result<VideoMetadata> {
-    let mut duration = 0.0;
-    let mut width = 0;
-    let mut height = 0;
+    let mut meta = VideoMetadata::default();
 
     for line in stderr.lines() {
         let line = line.trim();
+        
         // Parse Duration
         if line.starts_with("Duration:") {
-            // Format: Duration: 00:00:00.00, ...
             if let Some(time_str) = line.split(',').next().and_then(|s| s.strip_prefix("Duration: ")) {
                 let parts: Vec<&str> = time_str.trim().split(':').collect();
                 if parts.len() == 3 {
                     let h: f64 = parts[0].parse().unwrap_or(0.0);
                     let m: f64 = parts[1].parse().unwrap_or(0.0);
                     let s: f64 = parts[2].parse().unwrap_or(0.0);
-                    duration = h * 3600.0 + m * 60.0 + s;
+                    meta.duration_seconds = h * 3600.0 + m * 60.0 + s;
                 }
             }
         }
-        // Parse Dimensions from Stream line
-        // Format: Stream #0:0(und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 1280x720 [SAR 1:1 DAR 16:9], 1205 kb/s, 24 fps, 24 tbr, 12288 tbn, 48 tbc
+        
+        // Parse Dimensions
         if line.contains("Video:") {
-            // Look for "1280x720" pattern
-            // Crude parsing: split by commas, find one with 'x' inside
             let parts: Vec<&str> = line.split(',').collect();
             for part in parts {
                 let part = part.trim();
-                // Check if part matches digits x digits
                 if let Some(x_pos) = part.find('x') {
                     let (w_str, h_str) = part.split_at(x_pos);
-                    let h_str = &h_str[1..]; // skip 'x'
-                    
-                    // cleanup " [SAR..." from height if present
+                    let h_str = &h_str[1..];
                     let h_str = h_str.split_whitespace().next().unwrap_or(h_str);
 
                     if let (Ok(w), Ok(h)) = (w_str.parse::<u32>(), h_str.parse::<u32>()) {
-                        width = w;
-                        height = h;
-                        // Avoid false positives (small numbers)
-                        if w > 0 && h > 0 {
-                            break;
-                        }
+                        meta.width = w;
+                        meta.height = h;
+                        if w > 0 && h > 0 { break; }
                     }
                 }
             }
         }
+
+        // Parse Metadata Keys (Case insensitive check might be safer but FFmpeg output is usually lower case keys)
+        // Note: FFmpeg prints metadata keys with various prefixes depending on the container (e.g. com.apple.quicktime...)
+        
+        if let Some(val) = get_metadata_value(line, "make") { meta.make = Some(val); }
+        if let Some(val) = get_metadata_value(line, "model") { meta.model = Some(val); }
+        if let Some(val) = get_metadata_value(line, "creation_time") { meta.creation_time = Some(val); }
+        if let Some(val) = get_metadata_value(line, "creationdate") { meta.creation_time = Some(val); } // Apple specific
+        if let Some(val) = get_metadata_value(line, "location.ISO6709") { meta.location = Some(val); }
+        if let Some(val) = get_metadata_value(line, "location") { 
+            if meta.location.is_none() { meta.location = Some(val); }
+        }
     }
 
-    if width == 0 || height == 0 {
-        // Fallback or warning?
-        log::info!("Warning: Could not parse video dimensions from ffmpeg output");
-    }
+    Ok(meta)
+}
 
-    Ok(VideoMetadata {
-        duration_seconds: duration,
-        width,
-        height,
-    })
+fn get_metadata_value(line: &str, key_suffix: &str) -> Option<String> {
+    // Matches "key : value" where key ends with key_suffix (case insensitive)
+    // E.g. "com.apple.quicktime.make: Apple"
+    if let Some(idx) = line.find(':') {
+        let (key_part, val_part) = line.split_at(idx);
+        let key = key_part.trim().to_lowercase();
+        let suffix = key_suffix.to_lowercase();
+        // Check if key ends with the suffix (ignoring namespaces)
+        if key == suffix || key.ends_with(&format!(".{}", suffix)) {
+            return Some(val_part[1..].trim().to_string());
+        }
+    }
+    None
 }
 
 const THUMBNAIL_QUALITY: f32 = 70.0;
@@ -234,12 +247,40 @@ fn resize_and_process_frame(img: &image::DynamicImage, max_dim: u32) -> Result<(
 }
 
 /// Process an image file: create WebP original and thumbnail
-/// Uses image crate directly for reliability
-pub fn process_image(path: &Path) -> Result<ProcessedMedia> {
+/// Uses image crate directly for reliability, with FFmpeg fallback
+pub async fn process_image(
+    transcoder: &impl Transcoder,
+    path: &Path,
+) -> Result<ProcessedMedia> {
     use image::GenericImageView;
 
-    // Load image using image crate
-    let img = image::open(path).context("Failed to open image")?;
+    // Load image using image crate, with FFmpeg fallback
+    let img = match image::open(path) {
+        Ok(i) => i,
+        Err(e) => {
+            log::warn!("Failed to open image directly ({}); attempting FFmpeg fallback...", e);
+            
+            let temp_dir = std::env::temp_dir();
+            let millis = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let temp_png = temp_dir.join(format!("fallback_{}.png", millis));
+            
+            let args = vec![
+                "-i".to_string(),
+                path.to_string_lossy().to_string(),
+                "-y".to_string(),
+                temp_png.to_string_lossy().to_string(),
+            ];
+            
+            transcoder.run_ffmpeg(&args).await.context("FFmpeg fallback conversion failed")?;
+            
+            let i = image::open(&temp_png).context("Failed to open fallback PNG")?;
+            std::fs::remove_file(&temp_png).ok();
+            i
+        }
+    };
 
     let (width, height) = img.dimensions();
 

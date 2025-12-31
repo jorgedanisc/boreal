@@ -10,7 +10,7 @@ mod desktop {
         image::Image,
         menu::{Menu, MenuItem},
         tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-        AppHandle, Emitter, Manager,
+        AppHandle, Emitter, Manager, Wry,
     };
     use tokio::sync::RwLock;
     pub use super::UploadProgressState;
@@ -19,6 +19,8 @@ mod desktop {
     pub struct TrayManager {
         /// The tray icon handle
         tray: Option<TrayIcon>,
+        /// The progress menu item handle
+        progress_item: Option<MenuItem<Wry>>,
         /// Current upload state
         state: Arc<RwLock<UploadProgressState>>,
         /// Pre-rendered icon frames for animation
@@ -30,6 +32,7 @@ mod desktop {
         pub fn new() -> Self {
             Self {
                 tray: None,
+                progress_item: None,
                 state: Arc::new(RwLock::new(UploadProgressState::default())),
                 icons: Vec::new(),
             }
@@ -40,14 +43,20 @@ mod desktop {
             // Generate icon frames with different opacities for animation
             self.icons = Self::generate_icon_frames();
 
+            // Create the menu items
+            let progress_item = MenuItem::with_id(app, "progress", "No uploads in progress", false, None::<&str>)?;
+            let open_item = MenuItem::with_id(app, "open_panel", "Open Upload Panel", true, None::<&str>)?;
+            
             // Create the tray menu
             let menu = Menu::with_items(
                 app,
                 &[
-                    &MenuItem::with_id(app, "progress", "No uploads in progress", false, None::<&str>)?,
-                    &MenuItem::with_id(app, "open_panel", "Open Upload Panel", true, None::<&str>)?,
+                    &progress_item,
+                    &open_item,
                 ],
             )?;
+            
+            self.progress_item = Some(progress_item);
 
             // Build the tray icon (initially hidden/idle)
             let tray = TrayIconBuilder::new()
@@ -62,10 +71,17 @@ mod desktop {
                         ..
                     } = event
                     {
-                        // Left click - show menu or open panel
+                        // Left click - Open Panel AND Show Window
                         let app = tray.app_handle();
                         // Emit event to frontend to open upload panel
                         let _ = app.emit("tray:open_upload_panel", ());
+                        
+                        // Show/Focus Window
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                 })
                 .on_menu_event(|app, event| {
@@ -93,6 +109,17 @@ mod desktop {
             log::info!("[Tray] System tray initialized");
             Ok(())
         }
+
+        // ... generate_icon_frames, render_snowflake_icon, draw_line ...
+        // Keeping them as is, they are outside the replacement range if I am careful or include them.
+        // I will restart the replacement content after init to include update_state properly. 
+        // Wait, I need to include generate_icon_frames etc if I replace the whole block.
+        // Using multiple chunks is better.
+        
+        // Chunk 1: Struct and Init
+        
+        // Chunk 2: update_state
+
 
         /// Generate icon frames with different opacities for pulsing animation
         fn generate_icon_frames() -> Vec<Image<'static>> {
@@ -219,22 +246,41 @@ mod desktop {
             if is_processing {
                 // Active Upload: Show progress fill icon
                 self.update_icon(progress).await?;
-                // Tooltip: "Uploading: X%"
+                
+                let text = format!("Uploading: {:.0}% ({}/{})", progress * 100.0, completed, total);
+                
+                // Tooltip
                 if let Some(tray) = &self.tray {
-                     let tooltip = format!("Uploading: {:.0}% ({}/{})", progress * 100.0, completed, total);
-                     tray.set_tooltip(Some(&tooltip))?;
+                     tray.set_tooltip(Some(&text))?;
                 }
-                log::info!("[Tray] Upload progress: {:.0}% ({}/{})", progress * 100.0, completed, total);
+                // Menu Item
+                if let Some(item) = &self.progress_item {
+                    let _ = item.set_text(text);
+                }
+                
+                // Reduced logging (debug only)
+                log::debug!("[Tray] Upload progress: {:.0}% ({}/{})", progress * 100.0, completed, total);
             } else if has_completed_items {
                 // Completed State: Show full/solid icon (100% progress)
                 self.update_icon(1.0).await?;
-                // Tooltip: "Uploads Completed"
+                
+                let text = "Uploads Completed";
+                
+                // Tooltip
                 if let Some(tray) = &self.tray {
-                    tray.set_tooltip(Some("Uploads Completed"))?;
+                    tray.set_tooltip(Some(text))?;
                 }
+                // Menu Item
+                if let Some(item) = &self.progress_item {
+                    let _ = item.set_text(text);
+                }
+                
                 log::info!("[Tray] Uploads completed, keeping tray visible");
             } else {
                 // Idle / Hidden
+                if let Some(item) = &self.progress_item {
+                    let _ = item.set_text("No uploads in progress");
+                }
                 log::info!("[Tray] Idle, hiding tray");
             }
 

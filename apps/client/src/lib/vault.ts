@@ -146,6 +146,12 @@ export interface Photo {
   media_type: 'image' | 'video' | 'audio';
   latitude?: number;
   longitude?: number;
+  make?: string;
+  model?: string;
+  lens_model?: string;
+  iso?: number;
+  f_number?: number;
+  exposure_time?: string;
 }
 
 export async function getPhotos(): Promise<Photo[]> {
@@ -168,6 +174,17 @@ export interface GeoPhoto {
   latitude: number;
   longitude: number;
   captured_at?: string;
+  // Extended fields for Lightbox
+  filename: string;
+  created_at: string;
+  width: number;
+  height: number;
+  make?: string;
+  model?: string;
+  lens_model?: string;
+  iso?: number;
+  f_number?: number;
+  exposure_time?: string;
 }
 
 /**

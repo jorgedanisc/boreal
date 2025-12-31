@@ -108,6 +108,12 @@ export function MapPage() {
       border: 3px solid white;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       position: relative;
+      z-index: 1; /* Ensure frame sits on top */
+      /* Fix for Safari/Webkit clipping issues */
+      -webkit-mask-image: -webkit-radial-gradient(white, black);
+      mask-image: radial-gradient(white, black);
+      isolation: isolate;
+      transform: translateZ(0); /* Force GPU */
     `;
 
     if (thumbnailSrc) {
@@ -117,6 +123,10 @@ export function MapPage() {
         width: 100%;
         height: 100%;
         object-fit: cover;
+        border-radius: 4px; /* Slight inner radius to match border curve */
+        display: block;
+        position: relative;
+        z-index: -1; /* Sit behind the frame/border context if possible */
       `;
       thumbContainer.appendChild(img);
     }
@@ -137,6 +147,7 @@ export function MapPage() {
         min-width: 16px;
         text-align: center;
         text-shadow: 0 0 2px rgba(0,0,0,0.7);
+        z-index: 2; /* Badge on top of everything */
       `;
       thumbContainer.appendChild(badge);
     }

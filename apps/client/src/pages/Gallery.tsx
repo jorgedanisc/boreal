@@ -114,9 +114,44 @@ export default function Gallery() {
     }
   }, [completedCount, lastCompletedCount]);
 
-  // Media Items
+  // Sorting and Grouping
+  const sortedPhotos = useMemo(() => {
+    const known: Photo[] = [];
+    const unknown: Photo[] = [];
+
+    photos.forEach(p => {
+      // Audio is treated as known if it has created_at (which it usually does)
+      // Photos/Videos need captured_at to be "Known Timeline"
+      const isAudio = (p.media_type || 'image') === 'audio';
+      const hascapturedDate = !!p.captured_at;
+
+      if (hascapturedDate || (isAudio && p.created_at)) {
+        known.push(p);
+      } else {
+        unknown.push(p);
+      }
+    });
+
+    // Sort Known by captured_at (or created_at for audio) DESC
+    known.sort((a, b) => {
+      const dateA = new Date(a.captured_at || a.created_at).getTime();
+      const dateB = new Date(b.captured_at || b.created_at).getTime();
+      return dateB - dateA;
+    });
+
+    // Sort Unknown by created_at DESC (placed at end)
+    unknown.sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return dateB - dateA;
+    });
+
+    return { known, unknown, all: [...known, ...unknown] };
+  }, [photos]);
+
+  // Media Items for Grid (Processing sortedPhotos + Injecting Header)
   const mediaItems: MediaItem[] = useMemo(() => {
-    return photos.map(p => {
+    const items: MediaItem[] = sortedPhotos.known.map(p => {
       const mediaType = (p.media_type || 'image') as 'image' | 'video' | 'audio';
       return {
         id: p.id,
@@ -126,23 +161,50 @@ export default function Gallery() {
         alt: p.filename,
         mediaType,
         capturedAt: p.captured_at || p.created_at,
-      };
+      } as MediaItem; /// Cast to ensure compatibility if interface not yet picked up
     });
-  }, [photos, thumbnails]);
 
-  // Date Grouping
-  // const timelineDates = useMemo(() => {
+    if (sortedPhotos.unknown.length > 0) {
+      // Inject Divider
+      if (items.length > 0) {
+        items.push({
+          id: 'header-unknown-timeline',
+          src: '',
+          width: 0,
+          height: 0,
+          alt: 'Unknown Timeline',
+          mediaType: 'header' as any, // Cast if type update lags
+          capturedAt: ''
+        } as MediaItem);
+      }
 
+      // Add Unknown Items
+      items.push(...sortedPhotos.unknown.map(p => {
+        const mediaType = (p.media_type || 'image') as 'image' | 'video' | 'audio';
+        return {
+          id: p.id,
+          src: thumbnails[p.id] || '',
+          width: p.width,
+          height: p.height,
+          alt: p.filename,
+          mediaType,
+          capturedAt: p.created_at, // Use created_at for unknown
+          isUnknown: true
+        } as MediaItem;
+      }));
+    }
+
+    return items;
+  }, [sortedPhotos, thumbnails]);
 
   // Handle Scroll to update active date
   useEffect(() => {
-    if (photos.length === 0) {
+    if (mediaItems.length === 0) {
       setSubtitle('Timeline');
       return;
     }
 
     // Find the photo that is currently in view based on scroll position
-    // Get the index of the photo closest to the current scroll position
     let closestIndex = 0;
     let minDistance = Infinity;
     for (let i = 0; i < itemOffsets.length; i++) {
@@ -153,9 +215,21 @@ export default function Gallery() {
       }
     }
 
-    // Format date as "21 Dec 2025"
-    const photo = photos[closestIndex];
-    const dateStr = photo?.captured_at || photo?.created_at;
+    const item = mediaItems[closestIndex];
+    // If header, use its title
+    if (item && item.mediaType === ('header' as any)) {
+      setSubtitle(item.alt || 'Timeline');
+      return;
+    }
+
+    // Hide subtitle for unknown timeline items
+    if (item?.isUnknown) {
+      setSubtitle(''); // Or null, need to check if setSubtitle handles empty string as "clear"
+      return;
+    }
+
+    // Otherwise use item date
+    const dateStr = item?.capturedAt;
     if (dateStr) {
       try {
         const date = new Date(dateStr);
@@ -168,8 +242,10 @@ export default function Gallery() {
       } catch {
         setSubtitle('Timeline');
       }
+    } else {
+      setSubtitle('Timeline');
     }
-  }, [currentScrollY, photos, itemOffsets, setSubtitle]);
+  }, [currentScrollY, mediaItems, itemOffsets, setSubtitle]);
 
   // Handle Layout Computation from MasonryGrid
   const handleLayoutComputed = useCallback((layout: LayoutItem[]) => {
@@ -184,9 +260,9 @@ export default function Gallery() {
     setCurrentScrollY(offsetY);
   }, []);
 
-  // Slides for lightbox
+  // Slides for lightbox (Must match 'all' sorted order, ignoring headers)
   const lightboxPhotos = useMemo(() => {
-    return photos
+    return sortedPhotos.all
       .filter(p => (p.media_type || 'image') !== 'audio')
       .map(p => ({
         id: p.id,
@@ -197,19 +273,31 @@ export default function Gallery() {
         longitude: p.longitude,
         width: p.width,
         height: p.height,
-        vault_id: activeVault?.id
+        vault_id: activeVault?.id,
+        // Pass extended metadata for lightbox
+        make: p.make,
+        model: p.model,
+        lens_model: p.lens_model,
+        iso: p.iso,
+        f_number: p.f_number,
+        exposure_time: p.exposure_time
       }));
-  }, [photos, activeVault]);
+  }, [sortedPhotos, activeVault]);
 
   const handleItemClick = (index: number) => {
-    const photo = photos[index];
-    const mediaType = photo?.media_type || 'image';
+    const item = mediaItems[index];
+    if (!item || item.mediaType === ('header' as any)) return;
+
+    const photo = sortedPhotos.all.find(p => p.id === item.id);
+    if (!photo) return;
+
+    const mediaType = photo.media_type || 'image';
 
     if (mediaType === 'audio') {
       setAudioPlayer({ id: photo.id, filename: photo.filename });
     } else {
-      const filteredPhotos = photos.filter(p => (p.media_type || 'image') !== 'audio');
-      const lightboxIdx = filteredPhotos.findIndex(p => p.id === photo.id);
+      // Find index within the lightbox-only list (no audio)
+      const lightboxIdx = lightboxPhotos.findIndex(p => p.id === photo.id);
       setLightboxIndex(lightboxIdx);
     }
   };

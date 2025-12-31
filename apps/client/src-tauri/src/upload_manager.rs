@@ -2,7 +2,7 @@ use crate::cache::ThumbnailCache;
 use crate::crypto;
 use crate::exif_extractor;
 use crate::file_filter::{self, MediaType};
-use crate::media_processor;
+use crate::media_processor::{self, Transcoder};
 use crate::storage::Storage;
 use crate::vault::VaultConfig;
 use anyhow::{Context, Result};
@@ -24,9 +24,6 @@ const FRESH_UPLOAD_SIZE_THRESHOLD: u64 = 20 * 1024 * 1024 * 1024; // 20GB
 /// Retry configuration
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const INITIAL_RETRY_DELAY_MS: u64 = 1000;
-
-/// Maximum number of concurrent uploads (for parallel processing)
-const MAX_CONCURRENT_UPLOADS: usize = 4;
 
 struct PreparedUpload {
     original_key: String,
@@ -396,8 +393,16 @@ impl UploadManager {
 
         // Spawn background processing coordinator
         tokio::spawn(async move {
+            // Determine concurrency based on logical cores (min 2, max 8 for safety)
+            let cpu_count = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            let concurrency = cpu_count.clamp(2, 8);
+            
+            log::info!("[UploadManager] Starting background processor with {} concurrent threads", concurrency);
+
             // Semaphore to limit concurrent uploads
-            let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_UPLOADS));
+            let semaphore = Arc::new(Semaphore::new(concurrency));
             let mut active_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
             loop {
@@ -407,20 +412,26 @@ impl UploadManager {
                     Err(_) => break, // Semaphore closed
                 };
 
-                // Find the next pending item
+                // Find the next pending item and mark it as Processing IMMEDIATELY
                 let next_item: Option<UploadItem> = {
-                    let queue_guard = queue.read().await;
+                    let mut queue_guard = queue.write().await; // Write lock needed to update status
                     let paused = paused_ids.read().await;
                     let cancelled = cancelled_ids.read().await;
 
-                    queue_guard
-                        .values()
-                        .find(|i| {
+                    if let Some((_, item)) = queue_guard
+                        .iter_mut()
+                        .find(|(_, i)| {
                             matches!(i.status, UploadStatus::Pending)
                                 && !paused.contains(&i.id)
                                 && !cancelled.contains(&i.id)
-                        })
-                        .cloned()
+                        }) 
+                    {
+                        // Mark as processing immediately to prevent other threads from picking it up
+                        item.status = UploadStatus::Processing;
+                        Some(item.clone())
+                    } else {
+                        None
+                    }
                 };
 
                 match next_item {
@@ -596,9 +607,61 @@ impl UploadManager {
 
         log::info!("[Upload {}] Processing media...", id);
 
-        // Extract EXIF metadata
-        let exif_metadata = if item.media_type == MediaType::Image {
-            let metadata = exif_extractor::extract_metadata(&item.path);
+        // Extract EXIF metadata (now supports Video via nom-exif, with FFmpeg fallback)
+        let exif_metadata = if matches!(item.media_type, MediaType::Image | MediaType::Video) {
+            let mut metadata = exif_extractor::extract_metadata(&item.path);
+            
+            // If nom-exif failed to get meaningful data for a VIDEO, try FFmpeg sidecar
+            if matches!(item.media_type, MediaType::Video) && !metadata.has_data() {
+                log::info!("[Upload {}] nom-exif returned no data for video, trying FFmpeg fallback...", id);
+                let transcoder = media_processor::TauriTranscoder {
+                    app: app_handle.clone(),
+                };
+                
+                if let Ok(video_meta) = transcoder.get_video_metadata(&item.path).await {
+                    log::info!("[Upload {}] FFmpeg metadata: {:?}", id, video_meta);
+                    
+                    if metadata.make.is_none() { metadata.make = video_meta.make; }
+                    if metadata.model.is_none() { metadata.model = video_meta.model; }
+                    if metadata.width.is_none() && video_meta.width > 0 { metadata.width = Some(video_meta.width); }
+                    if metadata.height.is_none() && video_meta.height > 0 { metadata.height = Some(video_meta.height); }
+                    
+                    // Allow "creation_time" to populate "captured_at" if missing
+                    if metadata.captured_at.is_none() {
+                        if let Some(t) = video_meta.creation_time {
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&t) {
+                                metadata.captured_at = Some(dt.with_timezone(&chrono::Utc));
+                            }
+                        }
+                    }
+                    
+                    // Parse ISO6709 location (e.g., +41.1701-008.3315+181.090/)
+                    if metadata.latitude.is_none() {
+                        if let Some(loc) = video_meta.location {
+                            let s = loc.trim_end_matches('/');
+                            // Find split index between lat and lon (second sign)
+                            // Skip first char (sign)
+                            let lat_end = s.chars().skip(1).position(|c| c == '+' || c == '-').map(|p| p + 1).unwrap_or(s.len());
+                            let lat_str = &s[0..lat_end];
+                            
+                            if let Ok(lat) = lat_str.parse::<f64>() {
+                                metadata.latitude = Some(lat);
+                                
+                                // Parse Longitude from remainder
+                                let rem = &s[lat_end..];
+                                if !rem.is_empty() {
+                                    let lon_end = rem.chars().skip(1).position(|c| c == '+' || c == '-').map(|p| p + 1).unwrap_or(rem.len());
+                                    let lon_str = &rem[0..lon_end];
+                                    if let Ok(lon) = lon_str.parse::<f64>() {
+                                        metadata.longitude = Some(lon);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if metadata.has_data() {
                 log::info!(
                     "[Upload {}] EXIF: captured_at={:?}, lat={:?}, lon={:?}",
@@ -624,7 +687,11 @@ impl UploadManager {
             raw_thumbnail,
         ) = match item.media_type {
             MediaType::Image => {
-                let processed = media_processor::process_image(&item.path)
+                let transcoder = media_processor::TauriTranscoder {
+                    app: app_handle.clone(),
+                };
+                let processed = media_processor::process_image(&transcoder, &item.path)
+                    .await
                     .context(format!("Failed to process image: {:?}", item.path))?;
 
                 let thumbnail_bytes = processed.thumbnail.unwrap_or_else(|| {
@@ -902,12 +969,20 @@ impl UploadManager {
                     .map(|d| d.to_rfc3339());
                 let latitude = prepared.exif_metadata.as_ref().and_then(|m| m.latitude);
                 let longitude = prepared.exif_metadata.as_ref().and_then(|m| m.longitude);
-
-
+                let make = prepared.exif_metadata.as_ref().and_then(|m| m.make.clone());
+                let model = prepared.exif_metadata.as_ref().and_then(|m| m.model.clone());
+                let lens_model = prepared.exif_metadata.as_ref().and_then(|m| m.lens_model.clone());
+                let iso = prepared.exif_metadata.as_ref().and_then(|m| m.iso);
+                let f_number = prepared.exif_metadata.as_ref().and_then(|m| m.f_number).map(|f| f as f64);
+                let exposure_time = prepared.exif_metadata.as_ref().and_then(|m| m.exposure_time.clone());
 
                 conn.execute(
-                    "INSERT INTO photos (id, filename, width, height, created_at, captured_at, size_bytes, s3_key, thumbnail_key, tier, media_type, latitude, longitude)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    "INSERT INTO photos (
+                        id, filename, width, height, created_at, captured_at, size_bytes, 
+                        s3_key, thumbnail_key, tier, media_type, latitude, longitude,
+                        make, model, lens_model, iso, f_number, exposure_time
+                    )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     rusqlite::params![
                         id,
                         item.filename,
@@ -919,14 +994,20 @@ impl UploadManager {
                         prepared.original_key,
                         prepared.thumbnail_key.as_deref().unwrap_or(""),
                         tier,
-                        media_type_str,
+                        media_type_label,
                         latitude,
-                        longitude
+                        longitude,
+                        make,
+                        model,
+                        lens_model,
+                        iso,
+                        f_number,
+                        exposure_time
                     ],
                 ).context("Failed to insert into database")?;
                 log::info!(
                     "[Upload {}] {} added to database successfully",
-                    id, media_type_str
+                    id, media_type_label
                 );
             } else {
                 log::info!("[Upload {}] Warning: Database not initialized", id);

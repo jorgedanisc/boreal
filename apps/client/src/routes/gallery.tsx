@@ -101,14 +101,14 @@ function GalleryLayout() {
                 height: isDesktop ? 'calc(32px + 160px)' : 'calc(env(safe-area-inset-top) + 160px)',
               }}
             />
-            <div className="relative flex items-start justify-between px-4 pt-4 pb-2 pl-safe pr-safe pointer-events-auto z-10">
+            <div className="relative flex items-start justify-between mx-3 px-3 pt-4 pb-2 pl-safe pr-safe pointer-events-auto z-10">
               <div className="flex flex-col">
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => navigate({ to: "/" })}
-                    className="shrink-0 -ml-2 h-8 w-8"
+                    className="shrink-0 h-8 w-8"
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </Button>

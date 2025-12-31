@@ -136,12 +136,18 @@ const extractFramesFromBlobUrl = (blobUrl: string): Promise<string[]> => {
         return;
       }
 
-      const count = 6;
-      const interval = duration / count;
+      // Dynamic count: ~1 frame per 2s, min 2, max 8
+      const count = Math.min(8, Math.max(2, Math.floor(duration / 2)));
 
       try {
         // Start at 0.5s or 5% to avoid intro black frames
         const startOffset = Math.min(0.5, duration * 0.05);
+        // End buffer to avoid black frames at the end
+        const endBuffer = 0.5;
+
+        // Calculate safe interval to spread frames across the whole duration
+        const safeDuration = Math.max(0, duration - startOffset - endBuffer);
+        const interval = count > 1 ? safeDuration / (count - 1) : 0;
 
         for (let i = 0; i < count; i++) {
           const seekTime = Math.min(startOffset + (i * interval), duration - 0.1);

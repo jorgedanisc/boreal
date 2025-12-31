@@ -667,12 +667,18 @@ async fn bootstrap_vault(
 }
 
 #[tauri::command]
-async fn upload_photo(state: State<'_, AppState>, path: String) -> Result<(), String> {
+async fn upload_photo(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     use std::path::Path;
 
     // 1. Process Image using shared Media Processor (WebP Q90 Original, WebP Q70 Thumbnail)
     let path_obj = Path::new(&path);
-    let processed = media_processor::process_image(path_obj)
+    
+    let transcoder = crate::media_processor::TauriTranscoder {
+        app: app.clone(),
+    };
+    
+    let processed = crate::media_processor::process_image(&transcoder, path_obj)
+        .await
         .map_err(|e| format!("Failed to process image: {}", e))?;
 
     let thumbnail_bytes = processed.thumbnail.ok_or_else(|| "Failed to generate thumbnail".to_string())?;
@@ -765,6 +771,12 @@ struct Photo {
     height: u32,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    make: Option<String>,
+    model: Option<String>,
+    lens_model: Option<String>,
+    iso: Option<i32>,
+    f_number: Option<f64>,
+    exposure_time: Option<String>,
 }
 
 #[tauri::command]
@@ -773,24 +785,43 @@ async fn get_photos(state: State<'_, AppState>) -> Result<Vec<Photo>, String> {
     let conn = db_guard.as_ref().ok_or("DB not initialized")?;
 
     let mut stmt = conn
-        .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
+        .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude, make, model, lens_model, iso, f_number, exposure_time FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
         .map_err(|e| e.to_string())?;
 
     let photos = stmt
         .query_map([], |row| {
+            let filename: String = row.get(1)?;
+            let media_type_opt: Option<String> = row.get(5)?;
+            
+            let media_type = media_type_opt.unwrap_or_else(|| {
+                if filename.to_lowercase().ends_with(".mp3") 
+                   || filename.to_lowercase().ends_with(".wav")
+                   || filename.to_lowercase().ends_with(".m4a") 
+                   || filename.to_lowercase().ends_with(".ogg")
+                   || filename.to_lowercase().ends_with(".flac") {
+                    "audio".to_string()
+                } else {
+                    "image".to_string()
+                }
+            });
+
             Ok(Photo {
                 id: row.get(0)?,
-                filename: row.get(1)?,
+                filename,
                 created_at: row.get(2)?,
                 captured_at: row.get(3)?,
                 tier: row.get(4)?,
-                media_type: row
-                    .get::<_, Option<String>>(5)?
-                    .unwrap_or_else(|| "image".to_string()),
+                media_type,
                 width: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
                 height: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
                 latitude: row.get(8)?,
                 longitude: row.get(9)?,
+                make: row.get(10)?,
+                model: row.get(11)?,
+                lens_model: row.get(12)?,
+                iso: row.get(13)?,
+                f_number: row.get(14)?,
+                exposure_time: row.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -819,6 +850,12 @@ struct PhotoWithVault {
     height: u32,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    make: Option<String>,
+    model: Option<String>,
+    lens_model: Option<String>,
+    iso: Option<i32>,
+    f_number: Option<f64>,
+    exposure_time: Option<String>,
 }
 
 /// Geolocated photo for map display
@@ -829,6 +866,17 @@ struct GeoPhoto {
     latitude: f64,
     longitude: f64,
     captured_at: Option<String>,
+    // Extended fields for Lightbox
+    filename: String,
+    created_at: String,
+    width: u32,
+    height: u32,
+    make: Option<String>,
+    model: Option<String>,
+    lens_model: Option<String>,
+    iso: Option<i32>,
+    f_number: Option<f64>,
+    exposure_time: Option<String>,
 }
 
 /// Get all photos from all vaults (for cross-vault search)
@@ -849,7 +897,7 @@ async fn get_all_photos(app: AppHandle) -> Result<Vec<PhotoWithVault>, String> {
         let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
 
         let mut stmt = conn
-            .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
+            .prepare("SELECT id, filename, created_at, captured_at, tier, media_type, width, height, latitude, longitude, make, model, lens_model, iso, f_number, exposure_time FROM photos ORDER BY COALESCE(captured_at, created_at) DESC")
             .map_err(|e| e.to_string())?;
 
         let photos = stmt
@@ -868,6 +916,12 @@ async fn get_all_photos(app: AppHandle) -> Result<Vec<PhotoWithVault>, String> {
                     height: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
                     latitude: row.get(8)?,
                     longitude: row.get(9)?,
+                    make: row.get(10)?,
+                    model: row.get(11)?,
+                    lens_model: row.get(12)?,
+                    iso: row.get(13)?,
+                    f_number: row.get(14)?,
+                    exposure_time: row.get(15)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -907,7 +961,7 @@ async fn get_all_photos_with_geolocation(app: AppHandle) -> Result<Vec<GeoPhoto>
         let conn = db::init_db(&db_path).map_err(|e| e.to_string())?;
 
         let mut stmt = conn
-            .prepare("SELECT id, latitude, longitude, captured_at FROM photos WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            .prepare("SELECT id, latitude, longitude, captured_at, filename, created_at, width, height, make, model, lens_model, iso, f_number, exposure_time FROM photos WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
             .map_err(|e| e.to_string())?;
 
         let photos = stmt
@@ -918,6 +972,16 @@ async fn get_all_photos_with_geolocation(app: AppHandle) -> Result<Vec<GeoPhoto>
                     latitude: row.get(1)?,
                     longitude: row.get(2)?,
                     captured_at: row.get(3)?,
+                    filename: row.get(4)?,
+                    created_at: row.get(5)?,
+                    width: row.get::<_, Option<u32>>(6)?.unwrap_or(0),
+                    height: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+                    make: row.get(8)?,
+                    model: row.get(9)?,
+                    lens_model: row.get(10)?,
+                    iso: row.get(11)?,
+                    f_number: row.get(12)?,
+                    exposure_time: row.get(13)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -2182,14 +2246,14 @@ async fn embed_all_photos_internal(
     }
     
     // Get all photo IDs and media types from this vault
-    let photos: Vec<(String, String)> = {
+    let photos: Vec<(String, Option<String>, String)> = {
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, COALESCE(media_type, 'image') FROM photos")
+            .prepare("SELECT id, media_type, filename FROM photos")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(|e| e.to_string())?;
         rows.filter_map(|r| r.ok()).collect()
     };
@@ -2198,11 +2262,21 @@ async fn embed_all_photos_internal(
     let mut skipped_count = 0;
     let mut no_cache_count = 0;
     
-    for (photo_id, media_type) in photos {
+    for (photo_id, media_type, filename) in photos {
         // Skip audio files - they have no thumbnails to embed
-        if media_type == "audio" {
+        // Check both media_type AND filename extension (in case media_type is null/wrong)
+        let is_audio = media_type.as_deref() == Some("audio") || 
+            filename.to_lowercase().ends_with(".mp3") || 
+            filename.to_lowercase().ends_with(".wav") || 
+            filename.to_lowercase().ends_with(".m4a") || 
+            filename.to_lowercase().ends_with(".ogg") ||
+            filename.to_lowercase().ends_with(".flac");
+            
+        if is_audio {
             continue;
         }
+
+        let media_type_display = media_type.as_deref().unwrap_or("image");
         
         // Check if already embedded
         {
@@ -2263,7 +2337,7 @@ async fn embed_all_photos_internal(
                 }
             }
         } else {
-            log::warn!("Missing cache for {} ({})", photo_id, media_type);
+            log::warn!("Missing cache for {} ({})", photo_id, media_type_display);
             no_cache_count += 1;
         }
     }
@@ -2297,27 +2371,42 @@ async fn embed_all_photos(
         }
         
         // Get all photo IDs and media types from this vault
-        let photos: Vec<(String, String)> = {
+        let photos: Vec<(String, Option<String>, String)> = {
             let conn = rusqlite::Connection::open(&db_path)
                 .map_err(|e| e.to_string())?;
             let mut stmt = conn
-                .prepare("SELECT id, COALESCE(media_type, 'image') FROM photos")
+                .prepare("SELECT id, media_type, filename FROM photos")
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .map_err(|e| e.to_string())?;
             rows.filter_map(|r| r.ok()).collect()
         };
         
-        let images_videos = photos.iter().filter(|(_, t)| t != "audio").count();
+        let images_videos = photos.iter().filter(|(_, t, f)| {
+            t.as_deref() != Some("audio") && 
+            !f.to_lowercase().ends_with(".mp3") &&
+            !f.to_lowercase().ends_with(".wav") &&
+            !f.to_lowercase().ends_with(".m4a")
+        }).count();
+        
         log::info!("Vault {} has {} photos ({} images/videos, {} audio)", 
                    vault_id, photos.len(), images_videos, photos.len() - images_videos);
         
-        for (photo_id, media_type) in photos {
+        for (photo_id, media_type, filename) in photos {
             // Skip audio files - they have no thumbnails to embed
-            if media_type == "audio" {
+            let is_audio = media_type.as_deref() == Some("audio") || 
+                filename.to_lowercase().ends_with(".mp3") || 
+                filename.to_lowercase().ends_with(".wav") || 
+                filename.to_lowercase().ends_with(".m4a") || 
+                filename.to_lowercase().ends_with(".ogg") ||
+                filename.to_lowercase().ends_with(".flac");
+                
+            if is_audio {
                 continue;
             }
+
+            let media_type_display = media_type.as_deref().unwrap_or("image");
             
             // Check if already embedded
             {
@@ -2381,7 +2470,7 @@ async fn embed_all_photos(
                     }
                 }
             } else {
-                log::warn!("Missing cache for {} ({})", photo_id, media_type);
+                log::warn!("Missing cache for {} ({})", photo_id, media_type_display);
                 no_cache_count += 1;
             }
         }

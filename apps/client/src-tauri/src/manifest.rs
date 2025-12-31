@@ -33,6 +33,12 @@ pub struct PhotoRecord {
     pub media_type: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub lens_model: Option<String>,
+    pub iso: Option<i32>,
+    pub f_number: Option<f64>,
+    pub exposure_time: Option<String>,
 }
 
 /// Represents a memory record for sync
@@ -108,7 +114,8 @@ pub fn export_manifest(conn: &Connection) -> Result<ManifestData> {
 fn export_photos(conn: &Connection) -> Result<Vec<PhotoRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, filename, width, height, created_at, captured_at, size_bytes, 
-                s3_key, thumbnail_key, tier, media_type, latitude, longitude, thumbnail_size_bytes
+                s3_key, thumbnail_key, tier, media_type, latitude, longitude, thumbnail_size_bytes,
+                make, model, lens_model, iso, f_number, exposure_time
          FROM photos",
     )?;
 
@@ -130,6 +137,12 @@ fn export_photos(conn: &Connection) -> Result<Vec<PhotoRecord>> {
             latitude: row.get(11)?,
             longitude: row.get(12)?,
             thumbnail_size_bytes: row.get(13)?,
+            make: row.get(14)?,
+            model: row.get(15)?,
+            lens_model: row.get(16)?,
+            iso: row.get(17)?,
+            f_number: row.get(18)?,
+            exposure_time: row.get(19)?,
         })
     })?;
 
@@ -251,8 +264,9 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
             conn.execute(
                 "INSERT INTO photos (id, filename, width, height, created_at, captured_at, 
                                     size_bytes, s3_key, thumbnail_key, tier, media_type, 
-                                    latitude, longitude, thumbnail_size_bytes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                    latitude, longitude, thumbnail_size_bytes,
+                                    make, model, lens_model, iso, f_number, exposure_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 rusqlite::params![
                     photo.id,
                     photo.filename,
@@ -268,6 +282,12 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                     photo.latitude,
                     photo.longitude,
                     photo.thumbnail_size_bytes,
+                    photo.make,
+                    photo.model,
+                    photo.lens_model,
+                    photo.iso,
+                    photo.f_number,
+                    photo.exposure_time,
                 ],
             )?;
             Ok(MergeResult::Added)
@@ -282,7 +302,8 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                                        created_at = ?5, captured_at = ?6, size_bytes = ?7,
                                        s3_key = ?8, thumbnail_key = ?9, tier = ?10,
                                        media_type = ?11, latitude = ?12, longitude = ?13,
-                                       thumbnail_size_bytes = ?14
+                                       thumbnail_size_bytes = ?14, make = ?15, model = ?16,
+                                       lens_model = ?17, iso = ?18, f_number = ?19, exposure_time = ?20
                      WHERE id = ?1",
                     rusqlite::params![
                         photo.id,
@@ -299,6 +320,12 @@ fn merge_photo(conn: &Connection, photo: &PhotoRecord) -> Result<MergeResult> {
                         photo.latitude,
                         photo.longitude,
                         photo.thumbnail_size_bytes,
+                        photo.make,
+                        photo.model,
+                        photo.lens_model,
+                        photo.iso,
+                        photo.f_number,
+                        photo.exposure_time,
                     ],
                 )?;
                 Ok(MergeResult::Updated)

@@ -365,22 +365,19 @@ export function SearchPage() {
             height: isDesktop ? 'calc(32px + 200px)' : 'calc(env(safe-area-inset-top) + 200px)',
           }}
         />
-        <div className="relative px-4 pt-4 pb-2 pl-safe pr-safe z-10">
+        <div className="relative mx-2 px-4 pt-4 pb-2 pl-safe pr-safe z-10">
           <div className="flex items-center gap-3">
             <motion.div
               className="flex-1 relative"
               whileFocus={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
-              <div className="absolute z-10 inset-y-0 left-3 flex items-center pointer-events-none">
-                <SearchIcon className="size-4 text-secondary-foreground" />
-              </div>
               <motion.input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={modelStatus.ready ? "Search by contents or filename..." : "Search by filename..."}
-                className="w-full h-10 pl-10 pr-10 rounded-full bg-secondary/60 backdrop-blur-md border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                className="w-full h-10 pl-4 pr-10 rounded-full bg-secondary/60 backdrop-blur-md border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
                 whileFocus={{
                   scale: 1.01,
                   boxShadow: "0 0 0 2px hsl(var(--primary) / 0.3)"
@@ -405,7 +402,7 @@ export function SearchPage() {
             </motion.button>
           </div>
 
-          <div className="flex items-center gap-4 mt-3 ml-4 px-1 min-h-[30px]">
+          <div className="flex items-center gap-4 mt-1 ml-4 px-1 min-h-[30px]">
             <div className="flex items-center gap-4">
               <AnimatePresence mode="wait" initial={false}>
                 {!isLoading && (
@@ -474,7 +471,7 @@ export function SearchPage() {
             items={mediaItems}
             columns={4}
             spacing={5}
-            paddingTop={isDesktop ? 180 : "calc(180px + env(safe-area-inset-top))"}
+            paddingTop={isDesktop ? 150 : "calc(150px + env(safe-area-inset-top))"}
             paddingBottom="calc(40px + env(safe-area-inset-bottom))"
             onItemClick={handleItemClick}
           />

@@ -42,6 +42,14 @@ pub fn init_db(path: &Path) -> Result<Connection> {
     conn.execute("ALTER TABLE photos ADD COLUMN thumbnail_size_bytes INTEGER", [])
         .ok();
 
+    // Migration: Extended Metadata (Make, Model, Lens, Shooting Settings)
+    conn.execute("ALTER TABLE photos ADD COLUMN make TEXT", []).ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN model TEXT", []).ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN lens_model TEXT", []).ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN iso INTEGER", []).ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN f_number REAL", []).ok();
+    conn.execute("ALTER TABLE photos ADD COLUMN exposure_time TEXT", []).ok();
+
     // Migration: Create metadata table for syncing vault properties (visits, name, etc.)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS metadata (

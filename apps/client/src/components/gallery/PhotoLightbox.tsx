@@ -4,7 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { IconInfoCircle, IconInfoCircleFilled, IconX } from '@tabler/icons-react';
 import { invoke } from '@tauri-apps/api/core';
 import { type } from '@tauri-apps/plugin-os';
-import { CalendarIcon, ImageIcon, MapPinIcon, XIcon } from 'lucide-react';
+import { CalendarIcon, ImageIcon, MapPinIcon, XIcon, CameraIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { PhotoProvider, PhotoSlider, PhotoView } from 'react-photo-view';
@@ -20,6 +20,13 @@ export interface PhotoMetadata {
   width: number;
   height: number;
   vault_id?: string;
+  // Extended Metadata
+  make?: string;
+  model?: string;
+  lens_model?: string;
+  iso?: number;
+  f_number?: number;
+  exposure_time?: string;
 }
 
 interface QuickPhotoSliderProps {
@@ -125,7 +132,10 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
     >
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-border/30">
-        <h3 className="font-semibold text-sm">Photo Info</h3>
+        {/* Filename with truncation for title */}
+        <h3 className="font-semibold text-sm truncate max-w-[240px]" title={photo.filename}>
+          {photo.filename}
+        </h3>
         <button onClick={onClose} className="p-1 hover:bg-secondary/50 rounded-lg transition-colors">
           <XIcon className="w-4 h-4" />
         </button>
@@ -133,68 +143,63 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Filename */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wide">
-            <ImageIcon className="w-3 h-3 shrink-0" />
-            <span>Filename</span>
-          </div>
-          <p className="text-sm font-medium truncate">{photo.filename}</p>
-        </div>
 
-        {/* Dimensions */}
-        <div className="space-y-1">
-          <div className="text-muted-foreground text-xs uppercase tracking-wide">
-            Dimensions
-          </div>
-          <p className="text-sm">{photo.width} × {photo.height}</p>
-        </div>
+        {/* Camera Info Card OR Resolution Card */}
+        {(photo.make || photo.model) ? (
+          <div className="bg-secondary/50 rounded-xl overflow-hidden backdrop-blur-sm border border">
+            {/* Header with Device Name */}
+            <div className="bg-white/5 px-4 py-0.5 border-b border-white/10">
+              <span className="font-medium text-sm text-foreground">
+                {[photo.make, photo.model].filter(Boolean).join(' ')}
+              </span>
+            </div>
 
-        {/* Date */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wide">
-            <CalendarIcon className="w-3 h-3 shrink-0" />
-            <span>Captured Date</span>
+            {/* Lens Info & Resolution */}
+            <div className="px-4 py-3 space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {photo.lens_model || "Main Camera"}
+                {photo.f_number && <span> — ƒ{photo.f_number}</span>}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {Math.round((photo.width * photo.height) / 1000000)} MP • {photo.width} × {photo.height}
+              </p>
+            </div>
+
+            {/* Settings Row - Only show if we have any camera settings */}
+            {(photo.iso || photo.f_number || photo.exposure_time) && (
+              <div className="border-t border-white/10 px-4 py-2.5 flex items-center justify-between text-sm text-muted-foreground">
+                <span>{photo.iso ? `ISO ${photo.iso}` : '—'}</span>
+                <span className="text-white/20">|</span>
+                <span>—</span>
+                <span className="text-white/20">|</span>
+                <span>0 ev</span>
+                <span className="text-white/20">|</span>
+                <span>{photo.f_number ? `ƒ${photo.f_number}` : '—'}</span>
+                <span className="text-white/20">|</span>
+                <span>{photo.exposure_time ? `${photo.exposure_time}s` : '—'}</span>
+              </div>
+            )}
           </div>
-          {hasDate ? (
-            <p className="text-sm">{formatDate(photo.captured_at!)}</p>
-          ) : isAddingDate ? (
-            <div className="space-y-2">
-              <Popover modal={true}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="w-full justify-start text-left font-normal">
-                    {tempDate ? tempDate.toLocaleDateString() : 'Pick a date'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0 z-[2000]" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={tempDate}
-                    onSelect={setTempDate}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-              <div className="flex gap-2">
-                <Button size="sm" onClick={handleSaveDate} disabled={isSaving || !tempDate} className="flex-1">
-                  Save
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setIsAddingDate(false)}>
-                  Cancel
-                </Button>
+        ) : (
+          /* Fallback Resolution Card - Same style as Camera Info Card */
+          (photo.width > 0 && photo.height > 0) && (
+            <div className="bg-secondary/50 rounded-xl overflow-hidden backdrop-blur-sm border border">
+              {/* Header */}
+              <div className="bg-white/5 px-4 py-0.5 border-b border-white/10">
+                <span className="font-medium text-sm text-foreground">
+                  Photo
+                </span>
+              </div>
+
+              {/* Resolution Info */}
+              <div className="px-4 py-3 space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  {Math.round((photo.width * photo.height) / 1000000)} MP • {photo.width} × {photo.height}
+                </p>
               </div>
             </div>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setIsAddingDate(true)}
-              className="w-full"
-            >
-              Add Date
-            </Button>
-          )}
-        </div>
+          )
+        )}
 
         {/* Location */}
         <div className="space-y-2">
@@ -243,16 +248,65 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
           )}
         </div>
 
-        {/* Created Date */}
-        <div className="space-y-1">
-          <div className="text-muted-foreground text-xs uppercase tracking-wide">
-            File Created
+        {/* Date (Moved below Location) */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wide">
+            <CalendarIcon className="w-3 h-3 shrink-0" />
+            <span>Captured Date</span>
           </div>
-          <p className="text-sm text-muted-foreground">{formatDate(photo.created_at)}</p>
+          {hasDate ? (
+            <p className="text-sm">{formatDate(photo.captured_at!)}</p>
+          ) : isAddingDate ? (
+            <div className="space-y-2">
+              <Popover modal={true}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-start text-left font-normal">
+                    {tempDate ? tempDate.toLocaleDateString() : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 z-50" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={tempDate}
+                    onSelect={setTempDate}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleSaveDate} disabled={isSaving || !tempDate} className="flex-1">
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setIsAddingDate(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsAddingDate(true)}
+              className="w-full"
+            >
+              Add Date
+            </Button>
+          )}
         </div>
+
       </div>
     </motion.div >
   );
+}
+
+// Helper for formatting bytes (Quick implementation as it's missing in component scope)
+function formatBytes(bytes: number, decimals = 2) {
+  if (!+bytes) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
 export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, photos, thumbnails, onPhotoUpdate }: QuickPhotoSliderProps) {

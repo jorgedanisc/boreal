@@ -1035,13 +1035,13 @@ dependencies = [
  "hyper-rustls 0.24.2",
  "image",
  "infer 0.16.0",
- "kamadak-exif",
  "local-ip-address",
  "log",
  "mdns-sd",
  "mime",
  "mime_guess",
  "ndarray",
+ "nom-exif",
  "ort",
  "pbkdf2",
  "rand 0.8.5",
@@ -3682,15 +3682,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kamadak-exif"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1130d80c7374efad55a117d715a3af9368f0fa7a2c54573afc15a188cd984837"
-dependencies = [
- "mutate_once",
-]
-
-[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4181,12 +4172,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mutate_once"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13d2233c9842d08cfe13f9eac96e207ca6a2ea10b80259ebe8ad0268be27d2af"
-
-[[package]]
 name = "native-tls"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4322,6 +4307,19 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "nom-exif"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90ca3eb5625a8964ce9156735dced002f6b1318a04171d7cdd6e88e507d28353"
+dependencies = [
+ "chrono",
+ "nom",
+ "regex",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
