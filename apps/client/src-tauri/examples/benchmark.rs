@@ -428,6 +428,7 @@ fn format_size(bytes: u64) -> String {
 /// Simulation of Frontend Frame Extraction
 /// Uses ffmpeg to extract 6 frames evenly spaced
 fn extract_simulation_frames(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     log::info!("Simulating frontend frame extraction for {:?}", path);
     // 1. Get Duration
     let output = std::process::Command::new("ffmpeg")
