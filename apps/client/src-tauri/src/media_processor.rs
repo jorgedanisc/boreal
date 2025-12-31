@@ -336,12 +336,41 @@ pub async fn process_image(
 
     let (width, height) = img.dimensions();
 
-    // Create original WebP (Q90)
-    let original_buf = {
+    // Create original WebP (Q90) or Passthrough if inflated
+    let (original_buf, original_extension) = {
         let rgb = img.to_rgb8();
         let encoder = webp::Encoder::from_rgb(rgb.as_raw(), width, height);
         let webp_memory = encoder.encode(90.0);
-        webp_memory.to_vec()
+        let webp_bytes = webp_memory.to_vec();
+
+        // Check against original file size
+        let input_size = std::fs::metadata(path)
+            .map(|m| m.len())
+            .unwrap_or(u64::MAX); // Force transcode if cannot read metadata
+
+        if let Some(reason) = should_passthrough(input_size, webp_bytes.len() as u64) {
+            log::info!(
+                "[Image] Passthrough: {} (original {} bytes, WebP {} bytes)",
+                reason,
+                input_size,
+                webp_bytes.len()
+            );
+            let input_bytes = std::fs::read(path).context("Failed to read original image for passthrough")?;
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("jpg") // Fallback, though we shouldn't hit this often
+                .to_lowercase();
+            (input_bytes, ext)
+        } else {
+             log::info!(
+                "[Image] Transcoded: {:.1}% compression ({} -> {} bytes)",
+                (webp_bytes.len() as f64 / input_size as f64) * 100.0,
+                input_size,
+                webp_bytes.len()
+            );
+            (webp_bytes, "webp".to_string())
+        }
     };
 
     // Create thumbnail using shared logic
@@ -355,7 +384,7 @@ pub async fn process_image(
 
     Ok(ProcessedMedia {
         original: original_buf,
-        original_extension: "webp".to_string(),
+        original_extension,
         thumbnail: Some(thumbnail_buf),
         preview: None,
         width,

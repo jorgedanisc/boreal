@@ -216,6 +216,10 @@ jobs:
           # Download linuxdeploy-plugin-appimage for aarch64
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O ~/.local/bin/linuxdeploy-plugin-appimage
           chmod +x ~/.local/bin/linuxdeploy-plugin-appimage
+
+          # Create symlinks to match what Tauri/linuxdeploy might expect
+          ln -sf ~/.local/bin/linuxdeploy ~/.local/bin/linuxdeploy-aarch64.AppImage
+          ln -sf ~/.local/bin/linuxdeploy-plugin-appimage ~/.local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
           
           # Add to PATH for the rest of the workflow
           echo "$HOME/.local/bin" >> $GITHUB_PATH

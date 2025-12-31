@@ -282,9 +282,11 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     let inflated_files: Vec<_> = results.iter().filter(|r| r.is_inflated).collect();
     let inflated_bytes: u64 = inflated_files.iter().map(|r| r.compressed_size_bytes - r.original_size_bytes).sum();
     
+    // Note: With Smart Passthrough active in app logic, we expect NO inflated files.
+    // This section now serves as a regression test / bug detector.
     if !inflated_files.is_empty() {
-        report.push_str("## Inflation Analysis\n\n");
-        report.push_str("> ⚠️ **Detected files becoming LARGER after compression**\n\n");
+        report.push_str("## ⚠️ REGRESSION: Inflation Detected\n\n");
+        report.push_str("> **Smart Passthrough failed to prevent inflation for these files:**\n\n");
         report.push_str("| Metric | Value |\n");
         report.push_str("|---|---|\n");
         report.push_str(&format!("| Inflated Files | {} / {} |\n", inflated_files.len(), results.len()));
@@ -294,34 +296,38 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         let inflated_png = inflated_files.iter().filter(|r| r.input_extension == "png").count();
         
         report.push_str("\n**Breakdown by Type**:\n");
-        report.push_str(&format!("- JPEG Inflation: {} files\n", inflated_jpg));
-        report.push_str(&format!("- PNG Inflation: {} files\n", inflated_png));
+        report.push_str(&format!("- JPEG: {} (Check media_processor logic)\n", inflated_jpg));
+        report.push_str(&format!("- PNG: {} (Check media_processor logic)\n", inflated_png));
         report.push_str("\n");
         
-        report.push_str("### Recommendation\n");
-        report.push_str("Implement **Smart Passthrough**: If `compressed_size > original_size * 0.95`, discard compressed version and store original.\n\n");
+        report.push_str("### Action Required\n");
+        report.push_str("Debug `media_processor.rs` to ensure `should_passthrough` is correctly applied.\n\n");
     }
 
     // === REAL SAMPLE RESULTS (Main Data) ===
-    report.push_str("## Real Sample Results (Cost Projection Basis)\n\n");
+    report.push_str("## Real Sample Results (Actual Measured Performance)\n\n");
     report.push_str("| File | Type | Status | Original | Output | Ratio | SSIM | Time |\n");
     report.push_str("|---|---|---|---|---|---|---|---|\n");
 
     let mut real_orig = 0u64;
-    let mut real_comp = 0u64;
+    let mut real_comp = 0u64; // Actual compressed size (includes passthrough)
     let mut real_thumb = 0u64;
-    let mut real_ideal = 0u64; // Size if we used smart passthrough
     let mut real_av_orig = 0u64;
-    let mut real_img_orig = 0u64;
     let mut real_img_comp = 0u64;
     
     for r in &real {
         let ssim_str = r.ssim.map(|s| format!("{:.4}", s)).unwrap_or_else(|| "-".to_string());
             
+        // Use status from result (which can be "Passthrough" if app logic decided so)
+        let status_icon = if r.status == "Passthrough" { "↩️" } else { 
+            if r.compression_ratio > 1.0 { "⚠️" } else { "✅" }
+        };
+
         report.push_str(&format!(
-            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
+            "| {} | {} | {} {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
             r.file_name,
             r.media_type,
+            status_icon,
             r.status,
             format_size(r.original_size_bytes),
             format_size(r.compressed_size_bytes),
@@ -335,23 +341,14 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         real_comp += r.compressed_size_bytes;
         real_thumb += r.thumbnail_size_bytes;
         
-        // Calculate "Ideal" size (Smart Passthrough)
-        let ideal_size = if r.compression_ratio > 0.95 {
-            r.original_size_bytes
-        } else {
-            r.compressed_size_bytes
-        };
-        real_ideal += ideal_size;
-        
         if r.media_type == "Video" || r.media_type == "Audio" {
             real_av_orig += r.original_size_bytes;
         } else {
-            real_img_orig += r.original_size_bytes;
             real_img_comp += r.compressed_size_bytes;
         }
     }
 
-    // === SYNTHETIC & EDGE TABLES (Simplified) ===
+    // === SYNTHETIC TABLES ===
      if !synthetic.is_empty() {
         report.push_str("\n<details>\n<summary>Synthetic Results</summary>\n\n");
         report.push_str("| File | Status | Ratio | Time |\n|---|---|---|---|\n");
@@ -361,11 +358,11 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         report.push_str("</details>\n");
     }
     
-    // === WHAT-IF ANALYSIS & COST ===
+    // === COST ANALYSIS ===
     if real_orig > 0 {
-        // 1. DATASET COMPOSITION VALIDATION
+        // 1. DATASET VALIDATION
         let av_fraction = real_av_orig as f64 / real_orig as f64;
-        let img_fraction = real_img_orig as f64 / real_orig as f64;
+        let img_fraction = 1.0 - av_fraction;
         let av_deviation = (av_fraction - 0.65).abs();
         let img_deviation = (img_fraction - 0.33).abs();
         
@@ -375,39 +372,47 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         report.push_str(&format!("| Video/Audio | {:.1}% | ~65% | {} |\n", av_fraction * 100.0, if av_deviation <= 0.15 { "✅" } else { "⚠️" }));
         report.push_str(&format!("| Images | {:.1}% | ~33% | {} |\n", img_fraction * 100.0, if img_deviation <= 0.15 { "✅" } else { "⚠️" }));
         
-        // 2. WHAT-IF ANALYSIS
-        report.push_str("\n## What-If Analysis: Smart Passthrough\n");
-        report.push_str("Comparing current strategy vs. Smart Passthrough (cutoff > 95%).\n\n");
-        
-        let current_ratio = real_comp as f64 / real_orig as f64;
-        let ideal_ratio = real_ideal as f64 / real_orig as f64;
+        // 2. PROJECTED SCENARIOS
+        report.push_str("\n## Cost Scenarios (1TB Library)\n");
+        report.push_str("Projections based on **actual measured sizes** from `media_processor.rs` logic.\n");
+        report.push_str("(Includes automatic Smart Passthrough for all media types).\n\n");
         
         let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
-        let projected_current_gb = (tb_bytes * current_ratio) / (1024.0 * 1024.0 * 1024.0);
-        let projected_ideal_gb = (tb_bytes * ideal_ratio) / (1024.0 * 1024.0 * 1024.0);
+        let thumb_fraction = real_thumb as f64 / real_orig as f64;
+        let thumbs_gb = (tb_bytes * thumb_fraction) / (1024.0 * 1024.0 * 1024.0);
         
-        let cost_current_da = projected_current_gb * COST_GLACIER_DEEP;
-        let cost_ideal_da = projected_ideal_gb * COST_GLACIER_DEEP;
+        // Scenario A: DESKTOP (Full Compression with Smart Passthrough)
+        let desktop_ratio = real_comp as f64 / real_orig as f64;
+        let desktop_orig_gb = (tb_bytes * desktop_ratio) / (1024.0 * 1024.0 * 1024.0);
         
-        report.push_str("| Strategy | Avg Ratio | Projected Size (1TB input) | Est. Monthly Cost (Originals) |\n");
-        report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| **Current** | {:.2}% | {:.2} GB | ${:.2} |\n", current_ratio * 100.0, projected_current_gb, cost_current_da));
-        report.push_str(&format!("| **Smart Passthrough** | {:.2}% | {:.2} GB | ${:.2} |\n", ideal_ratio * 100.0, projected_ideal_gb, cost_ideal_da));
-        report.push_str(&format!("| **Potential Savings** | | **{:.2} GB** | **${:.2}** |\n", projected_current_gb - projected_ideal_gb, cost_current_da - cost_ideal_da));
+        // Scenario B: MOBILE (Images Compressed, AV Original)
+        // Mobile uses: Original Video/Audio + Compressed Images (using same logic as Desktop)
+        let mobile_total_size = real_av_orig + real_img_comp;
+        let mobile_ratio = mobile_total_size as f64 / real_orig as f64;
+        let mobile_orig_gb = (tb_bytes * mobile_ratio) / (1024.0 * 1024.0 * 1024.0);
 
-        // 3. DETAILED COST BREAKDOWN
-        report.push_str("\n### Detailed Cost Breakdown (Smart Passthrough Scenario)\n");
+        report.push_str("| Scenario | Compressed Size | Thumbnails | Total Stored |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| **Desktop** (Compress All) | {:.2} GB | {:.2} GB | {:.2} GB |\n", desktop_orig_gb, thumbs_gb, desktop_orig_gb + thumbs_gb));
+        report.push_str(&format!("| **Mobile** (Compress Images Only) | {:.2} GB | {:.2} GB | {:.2} GB |\n", mobile_orig_gb, thumbs_gb, mobile_orig_gb + thumbs_gb));
+
+        // 3. DETAILED COSTS
+        report.push_str("\n### Monthly Cost Breakdown\n");
         
-        let thumbs_gb = (tb_bytes * (real_thumb as f64 / real_orig as f64)) / (1024.0 * 1024.0 * 1024.0);
         let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
         
-        let total_da_cost = cost_ideal_da + cost_thumbs;
-        let total_ir_cost = (projected_ideal_gb * COST_S3_INSTANT) + cost_thumbs;
+        // Desktop Costs
+        let dt_da_cost = (desktop_orig_gb * COST_GLACIER_DEEP) + cost_thumbs;
+        let dt_ir_cost = (desktop_orig_gb * COST_S3_INSTANT) + cost_thumbs;
         
-        report.push_str("| Storage Class | Originals | Thumbnails | **Total Month** |\n");
+        // Mobile Costs
+        let mo_da_cost = (mobile_orig_gb * COST_GLACIER_DEEP) + cost_thumbs;
+        let mo_ir_cost = (mobile_orig_gb * COST_S3_INSTANT) + cost_thumbs;
+        
+        report.push_str("| Storage Class | Desktop Cost | Mobile Cost | Notes |\n");
         report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| Deep Archive ($0.00099/GB) | ${:.2} | ${:.2} | **${:.2}** |\n", cost_ideal_da, cost_thumbs, total_da_cost));
-        report.push_str(&format!("| Instant Retrieval ($0.004/GB) | ${:.2} | ${:.2} | **${:.2}** |\n", projected_ideal_gb * COST_S3_INSTANT, cost_thumbs, total_ir_cost));
+        report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals: $0.99/TB, Thumbs: Std |\n", dt_da_cost, mo_da_cost));
+        report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals: $4.00/TB, Thumbs: Std |\n", dt_ir_cost, mo_ir_cost));
     }
     
     report
