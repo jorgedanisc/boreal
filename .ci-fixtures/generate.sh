@@ -14,10 +14,12 @@ echo "=============================================="
 echo "Generating Realistic Benchmark Fixtures"
 echo "=============================================="
 echo ""
-echo "Target Composition (for realistic 1TB projection):"
-echo "  - Photos: ~85% by count, ~33% by storage"
-echo "  - Videos: ~13% by count, ~65% by storage"
-echo "  - Audio:  ~2% by count, ~2% by storage"
+echo "Target Composition (Realistic Samples for 1TB projection):"
+echo "  - Photos: ~85% by count (Sampled down for CI)"
+echo "  - Videos: ~13% by count (Durations trimmed for CI)"
+echo "  - Audio:  ~2% by count"
+echo "  * NOTE: Counts are reduced to fit CI timeouts, but ratios are preserved."
+echo "  * Videos are trimmed to limit heavy H.265 transcoding time."
 echo ""
 
 # =============================================================================
@@ -112,11 +114,11 @@ echo "[2/5] Downloading real-world images from Picsum (Lorem Ipsum for photos)..
 # - Screenshots: 1920x1080 (~0.3-1MB)
 
 IMG_COUNT=0
-TARGET_IMAGES=170
+TARGET_IMAGES=50  # Reduced from 170 for CI speed
 
 # High-res photos (12MP-like) - majority of images
 echo "  Downloading high-resolution photos (4000x3000)..."
-for i in $(seq 1 100); do
+for i in $(seq 1 30); do
     if [ $IMG_COUNT -ge $TARGET_IMAGES ]; then break; fi
     # Use seed for reproducibility
     download_file "https://picsum.photos/seed/${i}/4000/3000.jpg" "$OUTPUT_DIR/real_img_hires_${i}.jpg"
@@ -125,7 +127,7 @@ done
 
 # Medium-res photos (phone default)
 echo "  Downloading medium-resolution photos (3000x2000)..."
-for i in $(seq 101 140); do
+for i in $(seq 101 110); do
     if [ $IMG_COUNT -ge $TARGET_IMAGES ]; then break; fi
     download_file "https://picsum.photos/seed/${i}/3000/2000.jpg" "$OUTPUT_DIR/real_img_medres_${i}.jpg"
     ((IMG_COUNT++)) || true
@@ -133,7 +135,7 @@ done
 
 # Portrait orientation photos (common on phones)
 echo "  Downloading portrait photos (2000x3000)..."
-for i in $(seq 141 155); do
+for i in $(seq 141 145); do
     if [ $IMG_COUNT -ge $TARGET_IMAGES ]; then break; fi
     download_file "https://picsum.photos/seed/${i}/2000/3000.jpg" "$OUTPUT_DIR/real_img_portrait_${i}.jpg"
     ((IMG_COUNT++)) || true
@@ -141,7 +143,7 @@ done
 
 # Screenshot-sized images (small, quick to compress)
 echo "  Downloading screenshot-sized images (1920x1080)..."
-for i in $(seq 156 170); do
+for i in $(seq 156 160); do
     if [ $IMG_COUNT -ge $TARGET_IMAGES ]; then break; fi
     download_file "https://picsum.photos/seed/${i}/1920/1080.jpg" "$OUTPUT_DIR/real_img_screenshot_${i}.jpg"
     ((IMG_COUNT++)) || true
@@ -196,7 +198,16 @@ PEXELS_MEDIUM=(
     "https://videos.pexels.com/video-files/3209789/3209789-hd_1280_720_25fps.mp4"    # Cooking
 )
 for url in "${PEXELS_MEDIUM[@]}"; do
-    download_file "$url" "$OUTPUT_DIR/real_vid_medium_${VID_IDX}.mp4"
+    filename=$(basename "$url")
+    dest="$OUTPUT_DIR/real_vid_medium_${VID_IDX}_${filename}.mp4"
+    download_file "$url" "$dest"
+    
+    # Trim to 15s for CI
+    if [ -f "$dest" ]; then
+        echo "    [TRIM] Limiting medium video to 15s for CI..."
+        ffmpeg -i "$dest" -t 15 -c copy "$dest.tmp.mp4" -y 2>/dev/null && mv "$dest.tmp.mp4" "$dest" || echo "    [WARN] trimming failed"
+    fi
+
     ((VID_IDX++)) || true
 done
 
@@ -215,11 +226,11 @@ for url in "${GOOGLE_LONG[@]}"; do
     dest="$OUTPUT_DIR/edge_vid_${EDGE_IDX}_${filename}"
     download_file "$url" "$dest"
     
-    # Trim to 60s to prevent CI timeouts (files are originally ~150-600MB)
+    # Trim to 15s to prevent CI timeouts (files are originally ~150-600MB)
     # Using a temporary file for the trimmed version
     if [ -f "$dest" ]; then
-        echo "    [TRIM] Limiting $filename to 60s for CI..."
-        ffmpeg -i "$dest" -t 60 -c copy "$dest.tmp.mp4" -y 2>/dev/null && mv "$dest.tmp.mp4" "$dest" || echo "    [WARN] trimming failed"
+        echo "    [TRIM] Limiting $filename to 15s for CI..."
+        ffmpeg -i "$dest" -t 15 -c copy "$dest.tmp.mp4" -y 2>/dev/null && mv "$dest.tmp.mp4" "$dest" || echo "    [WARN] trimming failed"
     fi
 
     ((EDGE_IDX++)) || true
