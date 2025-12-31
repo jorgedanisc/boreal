@@ -76,9 +76,9 @@ done
 # =============================================================================
 
 # --- Animated GIF (Tests conversion to animated WebP) ---
-ffmpeg -f lavfi -i "life=s=320x240:mold=10:r=10:ratio=0.1:death_color=#C83232:life_color=#00ff00" \
-    -t 3 -vf "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" \
-    -loop 0 -y "$OUTPUT_DIR/img_11_animated.gif" 2>/dev/null || echo "WARN: Animated GIF failed"
+ffmpeg -t 3 -f lavfi -i "life=s=320x240:mold=10:r=10:ratio=0.1:death_color=#C83232:life_color=#00ff00" \
+    -vf "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" \
+    -loop 0 -y "$OUTPUT_DIR/img_11_animated.gif" || echo "WARN: Animated GIF failed"
 
 # --- HEVC Video (iPhone default since 2017) ---
 ffmpeg -f lavfi -i testsrc=duration=3:size=1920x1080:rate=30 \
