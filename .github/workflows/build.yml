@@ -204,7 +204,9 @@ jobs:
         if: inputs.platform == 'ubuntu-22.04-arm'
         run: |
           # Pre-download and install linuxdeploy tools for ARM64 to avoid runtime failures
-          sudo apt-get install -y fuse libfuse2
+          # 'file' is needed by linuxdeploy to check binary types
+          # 'squashfs-tools' is needed for creating the AppImage filesystem
+          sudo apt-get install -y fuse libfuse2 file squashfs-tools
           mkdir -p ~/.local/bin
           
           # Download linuxdeploy for aarch64
@@ -220,6 +222,11 @@ jobs:
           
           # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
+          
+          # Verify installation
+          echo "Verifying linuxdeploy installation..."
+          $HOME/.local/bin/linuxdeploy --version || echo "linuxdeploy version check failed"
+          ls -la $HOME/.local/bin/
 
       - name: install frontend dependencies
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}

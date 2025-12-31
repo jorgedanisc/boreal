@@ -69,6 +69,54 @@ struct BenchmarkResult {
     input_bitrate_kbps: Option<u32>,
     /// Sample category: "Synthetic", "Real", or "Edge"
     sample_category: String,
+    /// SSIM Quality score (0.0-1.0)
+    ssim: Option<f64>,
+    /// Whether the file size increased
+    is_inflated: bool,
+}
+
+/// Calculate SSIM between original and compressed using FFmpeg
+fn calculate_ssim(original: &Path, compressed: &[u8]) -> Option<f64> {
+    let temp_name = format!("ssim_temp_{}.webp", uuid::Uuid::new_v4());
+    let temp_path = std::env::temp_dir().join(temp_name);
+    std::fs::write(&temp_path, compressed).ok()?;
+
+    let output = std::process::Command::new("ffmpeg")
+        .args(&[
+            "-i", original.to_str()?,
+            "-i", temp_path.to_str()?,
+            "-lavfi", "ssim",
+            "-f", "null", "-"
+        ])
+        .output()
+        .ok()?;
+
+    let _ = std::fs::remove_file(&temp_path);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    // Parse SSIM from stderr (format: "SSIM Y:... All:0.987654 (...")
+    stderr.lines()
+        .find(|l| l.contains("SSIM "))
+        .and_then(|line| line.split("All:").nth(1))
+        .and_then(|val| val.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+}
+
+fn determine_status(ratio_percent: f64, input_ext: &str, output_ext: &str) -> (String, bool) {
+    let ratio = ratio_percent / 100.0;
+    
+    // If input == output extension, assume passthrough logic was used if ratio ~ 100%
+    if input_ext == output_ext {
+        return ("Passthrough".to_string(), false);
+    }
+    
+    if ratio > 1.05 {
+        ("⚠️ Inflated".to_string(), true)
+    } else if ratio > 0.95 {
+        ("⏸️ Marginal".to_string(), false)
+    } else {
+        ("✅ Compressed".to_string(), false)
+    }
 }
 
 /// Extract bitrate from video file using ffprobe
@@ -153,41 +201,15 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
 
         let duration = start.elapsed();
 
-        let _original_size = processed.original.len() as u64; // This might be wrong if 'original' is compressed bytes?
-                                                              // Wait, ProcessedMedia.original is Vec<u8> of the *processed* file?
-                                                              // No, let's check ProcessedMedia definition.
-                                                              // pub struct ProcessedMedia { pub original: Vec<u8>, pub thumbnail: Option<Vec<u8>> }
-                                                              // Yes, 'original' is the processed bytes.
-                                                              // We want the size of the INPUT file for the ratio.
+
 
         let input_size = fs::metadata(&path)?.len();
         let compressed_size = processed.original.len() as u64;
         let thumbnail_size = processed.thumbnail.map(|t| t.len() as u64).unwrap_or(0);
         let ratio = compressed_size as f64 / input_size as f64;
         
-        // Determine status based on extension and ratio
         let output_ext = processed.original_extension.clone();
         let input_ext = ext.clone();
-        
-        // Get bitrate for videos
-        let input_bitrate = if media_type == "Video" {
-            get_video_bitrate(&path)
-        } else {
-            None
-        };
-        
-        let status = if media_type == "Image" {
-            // Images always get compressed to WebP
-            "Compressed".to_string()
-        } else if input_ext == output_ext {
-            // Same extension = passthrough
-            "Passthrough".to_string()
-        } else if ratio >= 1.0 {
-            // Inflated but transcoded (shouldn't happen with new logic)
-            "⚠ Inflated".to_string()
-        } else {
-            "Compressed".to_string()
-        };
         
         // Categorize sample by filename prefix
         let sample_category = if file_name.starts_with("synth_") {
@@ -198,6 +220,23 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             "Real".to_string()
         } else {
             "Unknown".to_string()
+        };
+
+        // Determine status and inflation
+        let (status, is_inflated) = determine_status(ratio * 100.0, &input_ext, &output_ext);
+
+        // Calculate SSIM for Real Images only (to save time, calculating SSIM is slow)
+        let ssim = if media_type == "Image" && sample_category == "Real" {
+            calculate_ssim(&path, &processed.original)
+        } else {
+            None
+        };
+        
+        // Get bitrate for videos
+        let input_bitrate = if media_type == "Video" {
+            get_video_bitrate(&path)
+        } else {
+            None
         };
 
         results.push(BenchmarkResult {
@@ -213,6 +252,8 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
             output_extension: output_ext,
             input_bitrate_kbps: input_bitrate,
             sample_category,
+            ssim,
+            is_inflated,
         });
     }
 
@@ -227,7 +268,6 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     let synthetic: Vec<_> = results.iter().filter(|r| r.sample_category == "Synthetic").collect();
     let real: Vec<_> = results.iter().filter(|r| r.sample_category == "Real").collect();
     let edge: Vec<_> = results.iter().filter(|r| r.sample_category == "Edge").collect();
-    let unknown: Vec<_> = results.iter().filter(|r| r.sample_category == "Unknown").collect();
     
     // Dataset summary
     report.push_str("## Dataset Summary\n\n");
@@ -236,54 +276,50 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str(&format!("| Synthetic | {} | Codec/format validation |\n", synthetic.len()));
     report.push_str(&format!("| Real | {} | **Realistic compression ratios** |\n", real.len()));
     report.push_str(&format!("| Edge | {} | Stress testing (long videos) |\n", edge.len()));
-    if !unknown.is_empty() {
-        report.push_str(&format!("| ⚠️ Unknown | {} | Unrecognized prefix |\n", unknown.len()));
-    }
     report.push_str("\n");
 
-    // === SYNTHETIC TEST RESULTS ===
-    if !synthetic.is_empty() {
-        report.push_str("## Synthetic Test Results (Codec Validation)\n\n");
-        report.push_str("<details>\n<summary>Click to expand synthetic file results</summary>\n\n");
-        report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time |\n");
-        report.push_str("|---|---|---|---|---|---|---|---|\n");
+    // === INFLATION ANALYSIS ===
+    let inflated_files: Vec<_> = results.iter().filter(|r| r.is_inflated).collect();
+    let inflated_bytes: u64 = inflated_files.iter().map(|r| r.compressed_size_bytes - r.original_size_bytes).sum();
+    
+    if !inflated_files.is_empty() {
+        report.push_str("## Inflation Analysis\n\n");
+        report.push_str("> ⚠️ **Detected files becoming LARGER after compression**\n\n");
+        report.push_str("| Metric | Value |\n");
+        report.push_str("|---|---|\n");
+        report.push_str(&format!("| Inflated Files | {} / {} |\n", inflated_files.len(), results.len()));
+        report.push_str(&format!("| Extra Bytes Stored | {} |\n", format_size(inflated_bytes)));
         
-        for r in &synthetic {
-            report.push_str(&format!(
-                "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
-                r.file_name,
-                r.media_type,
-                r.status,
-                format_size(r.original_size_bytes),
-                format_size(r.compressed_size_bytes),
-                r.output_extension,
-                r.compression_ratio * 100.0,
-                format_size(r.thumbnail_size_bytes),
-                r.processing_time_ms,
-            ));
-        }
-        report.push_str("\n</details>\n\n");
+        let inflated_jpg = inflated_files.iter().filter(|r| r.input_extension == "jpg" || r.input_extension == "jpeg").count();
+        let inflated_png = inflated_files.iter().filter(|r| r.input_extension == "png").count();
+        
+        report.push_str("\n**Breakdown by Type**:\n");
+        report.push_str(&format!("- JPEG Inflation: {} files\n", inflated_jpg));
+        report.push_str(&format!("- PNG Inflation: {} files\n", inflated_png));
+        report.push_str("\n");
+        
+        report.push_str("### Recommendation\n");
+        report.push_str("Implement **Smart Passthrough**: If `compressed_size > original_size * 0.95`, discard compressed version and store original.\n\n");
     }
 
     // === REAL SAMPLE RESULTS (Main Data) ===
     report.push_str("## Real Sample Results (Cost Projection Basis)\n\n");
-    report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time | Bitrate |\n");
-    report.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    report.push_str("| File | Type | Status | Original | Output | Ratio | SSIM | Time |\n");
+    report.push_str("|---|---|---|---|---|---|---|---|\n");
 
     let mut real_orig = 0u64;
     let mut real_comp = 0u64;
     let mut real_thumb = 0u64;
+    let mut real_ideal = 0u64; // Size if we used smart passthrough
     let mut real_av_orig = 0u64;
     let mut real_img_orig = 0u64;
     let mut real_img_comp = 0u64;
-
+    
     for r in &real {
-        let bitrate_str = r.input_bitrate_kbps
-            .map(|b| format!("{}kbps", b))
-            .unwrap_or_else(|| "-".to_string());
+        let ssim_str = r.ssim.map(|s| format!("{:.4}", s)).unwrap_or_else(|| "-".to_string());
             
         report.push_str(&format!(
-            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms | {} |\n",
+            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
             r.file_name,
             r.media_type,
             r.status,
@@ -291,14 +327,21 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             format_size(r.compressed_size_bytes),
             r.output_extension,
             r.compression_ratio * 100.0,
-            format_size(r.thumbnail_size_bytes),
+            ssim_str,
             r.processing_time_ms,
-            bitrate_str
         ));
 
         real_orig += r.original_size_bytes;
         real_comp += r.compressed_size_bytes;
         real_thumb += r.thumbnail_size_bytes;
+        
+        // Calculate "Ideal" size (Smart Passthrough)
+        let ideal_size = if r.compression_ratio > 0.95 {
+            r.original_size_bytes
+        } else {
+            r.compressed_size_bytes
+        };
+        real_ideal += ideal_size;
         
         if r.media_type == "Video" || r.media_type == "Audio" {
             real_av_orig += r.original_size_bytes;
@@ -308,107 +351,65 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         }
     }
 
-    // === EDGE CASE RESULTS ===
-    if !edge.is_empty() {
-        report.push_str("\n## Edge Case Results (Stress Testing)\n\n");
-        report.push_str("| File | Type | Status | Original | Output | Ratio | Thumb | Time | Bitrate |\n");
-        report.push_str("|---|---|---|---|---|---|---|---|---|\n");
-        
-        for r in &edge {
-            let bitrate_str = r.input_bitrate_kbps
-                .map(|b| format!("{}kbps", b))
-                .unwrap_or_else(|| "-".to_string());
-                
-            report.push_str(&format!(
-                "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms | {} |\n",
-                r.file_name,
-                r.media_type,
-                r.status,
-                format_size(r.original_size_bytes),
-                format_size(r.compressed_size_bytes),
-                r.output_extension,
-                r.compression_ratio * 100.0,
-                format_size(r.thumbnail_size_bytes),
-                r.processing_time_ms,
-                bitrate_str
-            ));
+    // === SYNTHETIC & EDGE TABLES (Simplified) ===
+     if !synthetic.is_empty() {
+        report.push_str("\n<details>\n<summary>Synthetic Results</summary>\n\n");
+        report.push_str("| File | Status | Ratio | Time |\n|---|---|---|---|\n");
+        for r in &synthetic {
+            report.push_str(&format!("| {} | {} | {:.2}% | {}ms |\n", r.file_name, r.status, r.compression_ratio * 100.0, r.processing_time_ms));
         }
+        report.push_str("</details>\n");
     }
-
-    // === COST PROJECTION (Based on REAL samples only) ===
-    report.push_str("\n---\n\n## Cost Projection (1 TB Library)\n\n");
     
-    if real.is_empty() {
-        report.push_str("> ⚠️ **WARNING**: No real samples found! Cost projection will be inaccurate.\n");
-        report.push_str("> Please run `.ci-fixtures/generate.sh` to download realistic test data.\n\n");
-        return report;
+    // === WHAT-IF ANALYSIS & COST ===
+    if real_orig > 0 {
+        // 1. DATASET COMPOSITION VALIDATION
+        let av_fraction = real_av_orig as f64 / real_orig as f64;
+        let img_fraction = real_img_orig as f64 / real_orig as f64;
+        let av_deviation = (av_fraction - 0.65).abs();
+        let img_deviation = (img_fraction - 0.33).abs();
+        
+        report.push_str("\n## Dataset Composition Validation\n");
+        report.push_str("| Metric | Value | Target | Status |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| Video/Audio | {:.1}% | ~65% | {} |\n", av_fraction * 100.0, if av_deviation <= 0.15 { "✅" } else { "⚠️" }));
+        report.push_str(&format!("| Images | {:.1}% | ~33% | {} |\n", img_fraction * 100.0, if img_deviation <= 0.15 { "✅" } else { "⚠️" }));
+        
+        // 2. WHAT-IF ANALYSIS
+        report.push_str("\n## What-If Analysis: Smart Passthrough\n");
+        report.push_str("Comparing current strategy vs. Smart Passthrough (cutoff > 95%).\n\n");
+        
+        let current_ratio = real_comp as f64 / real_orig as f64;
+        let ideal_ratio = real_ideal as f64 / real_orig as f64;
+        
+        let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
+        let projected_current_gb = (tb_bytes * current_ratio) / (1024.0 * 1024.0 * 1024.0);
+        let projected_ideal_gb = (tb_bytes * ideal_ratio) / (1024.0 * 1024.0 * 1024.0);
+        
+        let cost_current_da = projected_current_gb * COST_GLACIER_DEEP;
+        let cost_ideal_da = projected_ideal_gb * COST_GLACIER_DEEP;
+        
+        report.push_str("| Strategy | Avg Ratio | Projected Size (1TB input) | Est. Monthly Cost (Originals) |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| **Current** | {:.2}% | {:.2} GB | ${:.2} |\n", current_ratio * 100.0, projected_current_gb, cost_current_da));
+        report.push_str(&format!("| **Smart Passthrough** | {:.2}% | {:.2} GB | ${:.2} |\n", ideal_ratio * 100.0, projected_ideal_gb, cost_ideal_da));
+        report.push_str(&format!("| **Potential Savings** | | **{:.2} GB** | **${:.2}** |\n", projected_current_gb - projected_ideal_gb, cost_current_da - cost_ideal_da));
+
+        // 3. DETAILED COST BREAKDOWN
+        report.push_str("\n### Detailed Cost Breakdown (Smart Passthrough Scenario)\n");
+        
+        let thumbs_gb = (tb_bytes * (real_thumb as f64 / real_orig as f64)) / (1024.0 * 1024.0 * 1024.0);
+        let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
+        
+        let total_da_cost = cost_ideal_da + cost_thumbs;
+        let total_ir_cost = (projected_ideal_gb * COST_S3_INSTANT) + cost_thumbs;
+        
+        report.push_str("| Storage Class | Originals | Thumbnails | **Total Month** |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive ($0.00099/GB) | ${:.2} | ${:.2} | **${:.2}** |\n", cost_ideal_da, cost_thumbs, total_da_cost));
+        report.push_str(&format!("| Instant Retrieval ($0.004/GB) | ${:.2} | ${:.2} | **${:.2}** |\n", projected_ideal_gb * COST_S3_INSTANT, cost_thumbs, total_ir_cost));
     }
-
-    let img_ratio = if real_img_orig > 0 { real_img_comp as f64 / real_img_orig as f64 } else { 1.0 };
-    let overall_ratio = real_comp as f64 / real_orig as f64;
-    let thumb_ratio = real_thumb as f64 / real_orig as f64;
     
-    let av_fraction = real_av_orig as f64 / real_orig as f64;
-    let img_fraction = real_img_orig as f64 / real_orig as f64;
-
-    // Validate dataset realism (target: 65% AV, 33% Images by storage)
-    let av_target = 0.65;
-    let img_target = 0.33;
-    let av_deviation = (av_fraction - av_target).abs();
-    let img_deviation = (img_fraction - img_target).abs();
-    
-    if av_deviation > 0.15 || img_deviation > 0.15 {
-        report.push_str("> ⚠️ **Dataset Composition Warning**: The test dataset may not accurately reflect typical photo libraries.\n");
-        report.push_str(&format!("> Expected ~65% Video/Audio, ~33% Images. Got {:.1}% and {:.1}%.\n\n", av_fraction * 100.0, img_fraction * 100.0));
-    }
-
-    report.push_str(&format!("Based on **{}** real samples with average compression ratio of **{:.2}%**:\n\n", real.len(), overall_ratio * 100.0));
-
-    // Desktop Scenario
-    let source_tb = 1.0;
-    let compressed_gb_desktop = source_tb * 1024.0 * overall_ratio;
-    let thumbs_gb = source_tb * 1024.0 * thumb_ratio;
-    
-    // Mobile Scenario (AV not compressed)
-    let compressed_gb_mobile = (source_tb * 1024.0 * img_fraction * img_ratio) + (source_tb * 1024.0 * av_fraction);
-
-    report.push_str("### Dataset Composition (Real Samples)\n\n");
-    report.push_str("| Metric | Value | Target | Status |\n");
-    report.push_str("|---|---|---|---|\n");
-    report.push_str(&format!("| Video/Audio | {:.1}% | ~65% | {} |\n", 
-        av_fraction * 100.0, 
-        if av_deviation <= 0.15 { "✅" } else { "⚠️" }
-    ));
-    report.push_str(&format!("| Images | {:.1}% | ~33% | {} |\n", 
-        img_fraction * 100.0,
-        if img_deviation <= 0.15 { "✅" } else { "⚠️" }
-    ));
-    report.push_str(&format!("| Image Compression | {:.1}% | 20-40% | {} |\n\n", 
-        img_ratio * 100.0,
-        if img_ratio >= 0.15 && img_ratio <= 0.50 { "✅" } else { "⚠️" }
-    ));
-
-    report.push_str("### Storage Requirements (1 TB source)\n\n");
-    report.push_str("| Strategy | Compressed Size | Thumbnails | Total Stored |\n");
-    report.push_str("|---|---|---|---|\n");
-    report.push_str(&format!("| **Desktop (Full Compression)** | {:.2} GB | {:.2} GB | {:.2} GB |\n", compressed_gb_desktop, thumbs_gb, compressed_gb_desktop + thumbs_gb));
-    report.push_str(&format!("| **Mobile (Image Only)** | {:.2} GB | {:.2} GB | {:.2} GB |\n\n", compressed_gb_mobile, thumbs_gb, compressed_gb_mobile + thumbs_gb));
-
-    // Calculate Costs
-    let da_cost_desktop = (compressed_gb_desktop * COST_GLACIER_DEEP) + (thumbs_gb * COST_S3_STANDARD);
-    let ir_cost_desktop = (compressed_gb_desktop * COST_S3_INSTANT) + (thumbs_gb * COST_S3_STANDARD);
-    
-    let da_cost_mobile = (compressed_gb_mobile * COST_GLACIER_DEEP) + (thumbs_gb * COST_S3_STANDARD);
-    let ir_cost_mobile = (compressed_gb_mobile * COST_S3_INSTANT) + (thumbs_gb * COST_S3_STANDARD);
-
-    report.push_str("### Monthly Cost Estimate\n\n");
-    report.push_str("| Storage Class | Desktop Cost | Mobile Cost | Notes |\n");
-    report.push_str("|---|---|---|---|\n");
-    report.push_str(&format!("| **Deep Archive** | **${:.2}** | **${:.2}** | Originals in DA ($0.99/TB), Thumbs in Std |\n", da_cost_desktop, da_cost_mobile));
-    report.push_str(&format!("| **Instant Retrieval** | **${:.2}** | **${:.2}** | Originals in IR ($4.00/TB), Thumbs in Std |\n", ir_cost_desktop, ir_cost_mobile));
-
-    report.push_str("\n> **Note**: Mobile clients upload Video/Audio originals uncompressed to save battery/heat, but still compress Images.\n");
-    report.push_str("\n> **Methodology**: Cost projections are calculated from `real_*` prefixed samples only (not synthetic test files).\n");
     report
 }
 

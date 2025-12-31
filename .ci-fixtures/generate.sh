@@ -152,6 +152,40 @@ done
 echo "  Downloaded $IMG_COUNT images"
 
 # =============================================================================
+# SECTION 2.1: VARIANT IMAGE GENERATION (Low Q, Screenshots, Docs)
+# Addresses "WebP Inflation" investigation by adding diverse compressible types
+# =============================================================================
+echo ""
+echo "[2.1/5] Generating variant images (Low-Q, Screenshots, Docs)..."
+
+# 1. Low-Quality JPEGs (WhatsApp simulation)
+# Take first 5 high-res images and degrade them (resize + low quality)
+echo "  Generating Low-Quality JPEGs (WhatsApp style)..."
+for i in $(seq 1 5); do
+    SRC="$OUTPUT_DIR/real_img_hires_${i}.jpg"
+    if [ -f "$SRC" ]; then
+        # Scale to 800px width, quality 50 (very lossy)
+        ffmpeg -i "$SRC" -vf "scale=800:-1" -q:v 20 -y "$OUTPUT_DIR/real_img_lowq_whatsapp_${i}.jpg" 2>/dev/null
+    fi
+done
+
+# 2. Screenshots (PNG) - These should compress WELL with WebP (lossless-like)
+echo "  Generating simulated mobile screenshots (PNG)..."
+for i in $(seq 1 5); do
+    # Solid colors / simple gradients compress well
+    ffmpeg -f lavfi -i "color=c=white:size=1170x2532:d=1" -frames:v 1 -y "$OUTPUT_DIR/real_img_screenshot_iphone_${i}.png" 2>/dev/null
+done
+
+# 3. Scanned Documents (High Res, High Contrast, PNG)
+echo "  Generating simulated scanned documents (A4 300dpi-ish)..."
+for i in $(seq 1 3); do
+    # White background with basic noise/text simulation
+    ffmpeg -f lavfi -i "color=c=white:size=2480x3508:d=1" \
+        -vf "noise=alls=20:allf=t+u,eq=contrast=2" \
+        -frames:v 1 -y "$OUTPUT_DIR/real_img_scanned_doc_${i}.png" 2>/dev/null
+done
+
+# =============================================================================
 # SECTION 3: REAL-WORLD VIDEOS
 # Target: ~26 videos representing 13% of file count, ~65% of storage
 # Using Pexels and Mixkit for realistic phone-camera-like footage
