@@ -111,7 +111,10 @@ async fn run_benchmarks(test_dir: &Path) -> Result<Vec<BenchmarkResult>> {
                 fs::remove_file(output).ok();
                 (p, "Audio")
             }
-            "jpg" | "jpeg" | "png" | "webp" => (media_processor::process_image(&path), "Image"),
+            "jpg" | "jpeg" | "png" | "webp" => {
+                let p = media_processor::process_image(&transcoder, &path).await;
+                (p, "Image")
+            }
             _ => {
                 log::info!("Skipping unsupported file: {}", file_name);
                 continue;
