@@ -67,6 +67,9 @@ fn parse_restore_expiry(header: &str) -> Option<String> {
     None
 }
 
+// Re-export StorageClass for use in other modules
+pub use aws_sdk_s3::types::StorageClass;
+
 #[derive(Clone)]
 pub struct Storage {
     client: Client,
@@ -139,6 +142,25 @@ impl Storage {
         Ok(())
     }
 
+    /// Upload a file with a specific storage class (for thumbnails/audio to GLACIER_IR)
+    pub async fn upload_file_with_storage_class(
+        &self,
+        key: &str,
+        body: Vec<u8>,
+        storage_class: StorageClass,
+    ) -> Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(ByteStream::from(body))
+            .storage_class(storage_class)
+            .send()
+            .await
+            .context("Failed to upload file")?;
+        Ok(())
+    }
+
     /// Upload a file with the 'fresh' tag for lifecycle rule targeting
     #[allow(dead_code)]
     pub async fn upload_file_with_tag(
@@ -152,7 +174,7 @@ impl Storage {
 
         // Use multipart upload for large files
         if body.len() > MULTIPART_THRESHOLD {
-            self.upload_multipart_with_tag(key, body, &tagging, None)
+            self.upload_multipart_with_tag(key, body, &tagging, None, None)
                 .await
         } else {
             self.client
@@ -173,6 +195,7 @@ impl Storage {
         key: &str,
         body: Vec<u8>,
         fresh_upload: bool,
+        storage_class: Option<StorageClass>,
         progress_tx: Option<mpsc::Sender<(u64, u64)>>,
     ) -> Result<()> {
         let tag_value = if fresh_upload { "true" } else { "false" };
@@ -181,7 +204,7 @@ impl Storage {
         // Use multipart upload ONLY for large files (> 5MB)
         // Small files use standard put_object for better stability and fewer permission requirements
         if body.len() > MULTIPART_THRESHOLD {
-            self.upload_multipart_with_tag(key, body, &tagging, progress_tx).await
+            self.upload_multipart_with_tag(key, body, &tagging, storage_class, progress_tx).await
         } else {
             let total_size = body.len() as u64;
             
@@ -190,14 +213,19 @@ impl Storage {
                 tx.send((0, total_size)).await.ok();
             }
 
-            let result = self.client
+            let mut request = self.client
                 .put_object()
                 .bucket(&self.bucket)
                 .key(key)
                 .body(ByteStream::from(body))
-                .tagging(&tagging)
-                .send()
-                .await;
+                .tagging(&tagging);
+            
+            // Apply storage class if specified (for direct upload to Glacier tiers)
+            if let Some(class) = storage_class {
+                request = request.storage_class(class);
+            }
+
+            let result = request.send().await;
 
             // Emit completion progress on success
             if result.is_ok() {
@@ -216,17 +244,25 @@ impl Storage {
         key: &str,
         body: Vec<u8>,
         tagging: &str,
+        storage_class: Option<StorageClass>,
         progress_tx: Option<mpsc::Sender<(u64, u64)>>,
     ) -> Result<()> {
         let total_size = body.len() as u64;
 
         // Start multipart upload
-        let create_response = self
+        let mut create_request = self
             .client
             .create_multipart_upload()
             .bucket(&self.bucket)
             .key(key)
-            .tagging(tagging)
+            .tagging(tagging);
+        
+        // Apply storage class if specified (for direct upload to Glacier tiers)
+        if let Some(class) = storage_class {
+            create_request = create_request.storage_class(class);
+        }
+        
+        let create_response = create_request
             .send()
             .await
             .context("Failed to initiate multipart upload")?;

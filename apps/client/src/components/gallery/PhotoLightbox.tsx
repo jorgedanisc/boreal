@@ -1,18 +1,17 @@
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { IconInfoCircle, IconInfoCircleFilled, IconX, IconLoader2, IconDownload, IconCheck, IconClock } from '@tabler/icons-react';
+import { checkOriginalStatus, getOriginal, OriginalStatus, requestOriginalRestore } from '@/lib/vault';
+import { IconCalendar, IconCircleDashedLetterO, IconCircleLetterO, IconClock, IconDownload, IconInfoCircle, IconInfoCircleFilled, IconLoader, IconMapPin, IconMapPinExclamation, IconX } from '@tabler/icons-react';
 import { invoke } from '@tauri-apps/api/core';
-import { type } from '@tauri-apps/plugin-os';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
-import { toast } from 'sonner';
-import { CalendarIcon, ImageIcon, MapPinIcon, XIcon, CameraIcon } from 'lucide-react';
+import { type } from '@tauri-apps/plugin-os';
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useState } from 'react';
 import { PhotoProvider, PhotoSlider, PhotoView } from 'react-photo-view';
 import 'react-photo-view/dist/react-photo-view.css';
-import { checkOriginalStatus, requestOriginalRestore, getOriginal, OriginalStatus } from '@/lib/vault';
+import { toast } from 'sonner';
 
 export interface PhotoMetadata {
   id: string;
@@ -142,7 +141,7 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
           {photo.filename}
         </h3>
         <button onClick={onClose} className="p-1 hover:bg-secondary/50 rounded-lg transition-colors">
-          <XIcon className="w-4 h-4" />
+          <IconX className="w-4 h-4" />
         </button>
       </div>
 
@@ -209,7 +208,7 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
         {/* Location */}
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wide">
-            <MapPinIcon className="w-3 h-3 shrink-0" />
+            <IconMapPin className="w-3 h-3 shrink-0" />
             <span>Location</span>
           </div>
           {hasLocation ? (
@@ -256,7 +255,7 @@ function MetadataPanel({ photo, onClose, onUpdate, isDesktop }: MetadataPanelPro
         {/* Date (Moved below Location) */}
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wide">
-            <CalendarIcon className="w-3 h-3 shrink-0" />
+            <IconCalendar className="w-3 h-3 shrink-0" />
             <span>Captured Date</span>
           </div>
           {hasDate ? (
@@ -340,15 +339,23 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
       const base64 = await getOriginal(currentPhoto.id);
       console.log('[Original] Successfully loaded full resolution image');
 
-      // Determine MIME type based on media_type
-      let mimeType = 'image/webp'; // Default
+      // Determine MIME type based on media_type and filename
+      let mimeType = 'image/webp'; // Default for transcoded images
+
+      const ext = currentPhoto.filename.split('.').pop()?.toLowerCase();
+
       if (currentPhoto.media_type === 'video') {
         console.log('[Original] Detected VIDEO, setting video MIME type');
-        // Naive MIME type detection for video - could be improved with real file magic numbers or metadata
-        // But browsers are often forgiving with base64 video src if the container matches the data
         mimeType = 'video/mp4'; // fallback common type
-        if (currentPhoto.filename.toLowerCase().endsWith('.mov')) mimeType = 'video/quicktime';
-        if (currentPhoto.filename.toLowerCase().endsWith('.webm')) mimeType = 'video/webm';
+        if (ext === 'mov') mimeType = 'video/quicktime';
+        if (ext === 'webm') mimeType = 'video/webm';
+      } else {
+        // Handle passthrough image formats
+        if (ext === 'heic') mimeType = 'image/heic';
+        if (ext === 'heif') mimeType = 'image/heif';
+        if (ext === 'png') mimeType = 'image/png';
+        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+        if (ext === 'avif') mimeType = 'image/avif';
       }
 
       console.log('[Original] Setting originalSrc with MIME:', mimeType);
@@ -516,13 +523,13 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
                     title={originalStatus.status === 'cached' ? 'Viewing original' : 'Load original file'}
                   >
                     {isLoadingOriginal ? (
-                      <IconLoader2 className="w-4 h-4 animate-spin" />
+                      <IconLoader className="w-4 h-4 animate-spin" />
                     ) : originalStatus.status === 'cached' ? (
-                      <IconCheck className="w-4 h-4" />
+                      <IconCircleLetterO className="w-4 h-4" />
                     ) : originalStatus.status === 'restoring' ? (
                       <IconClock className="w-4 h-4" />
                     ) : (
-                      <IconDownload className="w-4 h-4" />
+                      <IconCircleDashedLetterO className="w-4 h-4" />
                     )}
                     <span>
                       {originalStatus.status === 'cached'

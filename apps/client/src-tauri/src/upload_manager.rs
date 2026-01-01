@@ -3,8 +3,8 @@ use crate::crypto;
 use crate::exif_extractor;
 use crate::file_filter::{self, MediaType};
 use crate::media_processor::{self, Transcoder};
-use crate::storage::Storage;
-use crate::vault::VaultConfig;
+use crate::storage::{Storage, StorageClass};
+use crate::vault::{StorageTier, VaultConfig};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rusqlite::Connection;
@@ -524,6 +524,15 @@ impl UploadManager {
             }
         };
 
+        // Get storage tier from config for determining target storage class
+        let storage_tier = {
+            let config_guard = config.lock().await;
+            config_guard
+                .as_ref()
+                .map(|c| c.storage_tier)
+                .unwrap_or_default()
+        };
+
         // Step 2: Upload (Network) - Retried on failure
         let mut last_error = String::new();
 
@@ -552,7 +561,8 @@ impl UploadManager {
                 thumbnail_cache,
                 app_handle,
                 &item,
-                &prepared
+                &prepared,
+                storage_tier,
             ).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
@@ -694,15 +704,28 @@ impl UploadManager {
                     .await
                     .context(format!("Failed to process image: {:?}", item.path))?;
 
-                let thumbnail_bytes = processed.thumbnail.unwrap_or_else(|| {
-                    log::info!(
-                        "[Upload {}] No thumbnail generated, using original (resized)",
-                        id
-                    );
-                    processed.original.clone() // Fallback
-                });
+                // Handle thumbnail - may be None for unsupported formats like HEIC
+                let (enc_thumbnail, thumbnail_key, raw_thumbnail) = if let Some(thumb_bytes) = processed.thumbnail {
+                    let enc = crypto::encrypt(&thumb_bytes, &key_arr).context("Thumbnail encryption failed")?;
+                    (Some(enc), Some(format!("thumbnails/{}.webp", id)), Some(thumb_bytes))
+                } else if let Some(frames) = &item.pre_generated_frames {
+                    // Fallback: Use frontend-provided thumbnail (e.g. for HEIC on Desktop/Mobile)
+                     if let Some(thumb_bytes) = frames.first() {
+                         log::info!("[Upload {}] Using frontend-provided thumbnail", id);
+                         let enc = crypto::encrypt(thumb_bytes, &key_arr).context("Thumbnail encryption failed")?;
+                         // Frontend sends JPEG, so we use .jpg extension
+                         (Some(enc), Some(format!("thumbnails/{}.jpg", id)), Some(thumb_bytes.clone()))
+                     } else {
+                        log::warn!("[Upload {}] Pre-generated frames empty", id);
+                        (None, None, None)
+                     }
+                } else {
+                    // No thumbnail for unsupported formats - we'll use a placeholder in the UI
+                    log::warn!("[Upload {}] No thumbnail generated (unsupported format)", id);
+                    (None, None, None)
+                };
 
-                // Encrypt
+                // Encrypt original
                 log::info!("[Upload {}] Encrypting processed original...", id);
                 Self::update_status_static(
                     queue,
@@ -713,19 +736,19 @@ impl UploadManager {
                 .await;
                 
                 let enc_original = crypto::encrypt(&processed.original, &key_arr).context("Encryption failed")?;
-                let enc_thumbnail = crypto::encrypt(&thumbnail_bytes, &key_arr).context("Thumbnail encryption failed")?;
 
-                let original_key = format!("originals/images/{}.webp", id);
-                let thumbnail_key = format!("thumbnails/{}.webp", id);
+                // Use dynamic extension from processor (supports passthrough formats like .heic)
+                let extension = &processed.original_extension;
+                let original_key = format!("originals/images/{}.{}", id, extension);
 
                 (
                     original_key,
-                    Some(thumbnail_key),
+                    thumbnail_key,
                     enc_original,
-                    Some(enc_thumbnail),
+                    enc_thumbnail,
                     processed.width,
                     processed.height,
-                    Some(thumbnail_bytes),
+                    raw_thumbnail,
                 )
             }
             MediaType::Video => {
@@ -827,6 +850,7 @@ impl UploadManager {
         app_handle: &AppHandle,
         item: &UploadItem,
         prepared: &PreparedUpload,
+        storage_tier: StorageTier,
     ) -> Result<()> {
         let id = item.id.clone();
 
@@ -839,6 +863,22 @@ impl UploadManager {
                 .clone()
         };
 
+        // Determine storage class for the original file
+        // - Fresh uploads: Standard (lifecycle will transition after 60 days)
+        // - Audio: GLACIER_IR (frequently accessed, no archive benefit)
+        // - Images/Videos non-fresh: vault's configured tier (DEEP_ARCHIVE or GLACIER_IR)
+        let original_storage_class = if item.fresh_upload {
+            None // Standard (default)
+        } else {
+            match item.media_type {
+                MediaType::Audio => Some(StorageClass::GlacierIr),
+                MediaType::Image | MediaType::Video => Some(match storage_tier {
+                    StorageTier::DeepArchive => StorageClass::DeepArchive,
+                    StorageTier::GlacierInstantRetrieval => StorageClass::GlacierIr,
+                }),
+            }
+        };
+
         // Upload original
         let media_type_label = match item.media_type {
             MediaType::Image => "image",
@@ -846,11 +886,17 @@ impl UploadManager {
             MediaType::Audio => "audio",
         };
         
+        let storage_class_label = original_storage_class
+            .as_ref()
+            .map(|c| format!("{:?}", c))
+            .unwrap_or_else(|| "Standard".to_string());
+        
         log::info!(
-            "[Upload {}] Uploading {} ({} bytes)...",
+            "[Upload {}] Uploading {} ({} bytes) to {}...",
             id,
             media_type_label,
-            prepared.enc_original.len()
+            prepared.enc_original.len(),
+            storage_class_label
         );
         
         Self::update_status_static(
@@ -905,12 +951,13 @@ impl UploadManager {
             }
         });
 
-        // Upload with progress tracking
+        // Upload with progress tracking and storage class
         let upload_result = storage
             .upload_file_with_progress(
                 &prepared.original_key,
                 prepared.enc_original.clone(), // Clone the vec for upload (retry needs to keep ownership)
                 item.fresh_upload,
+                original_storage_class.clone(),
                 Some(progress_tx),
             )
             .await;
@@ -920,7 +967,7 @@ impl UploadManager {
 
         Self::update_progress_static(queue, app_handle, &id, 0.5, item.size / 2).await;
 
-        // Upload thumbnail if exists
+        // Upload thumbnail if exists (always to GLACIER_IR for instant access)
         if let (Some(thumb_key), Some(enc_thumb)) = (prepared.thumbnail_key.as_ref(), prepared.enc_thumbnail.as_ref()) {
             Self::update_status_static(
                 queue,
@@ -930,7 +977,10 @@ impl UploadManager {
             )
             .await;
 
-            let thumb_result = storage.upload_file(thumb_key, enc_thumb.clone()).await;
+            // Thumbnails always use GLACIER_IR for instant retrieval
+            let thumb_result = storage
+                .upload_file_with_storage_class(thumb_key, enc_thumb.clone(), StorageClass::GlacierIr)
+                .await;
 
             if thumb_result.is_err() {
                 storage.delete_file(&prepared.original_key).await.ok();
@@ -963,7 +1013,16 @@ impl UploadManager {
         {
             let db_guard = db.lock().await;
             if let Some(conn) = db_guard.as_ref() {
-                let tier = "Standard";
+                // Track the actual storage tier used
+                let tier = match &original_storage_class {
+                    None => "Standard",
+                    Some(StorageClass::DeepArchive) => "DeepArchive",
+                    Some(StorageClass::GlacierIr) => "GlacierIR",
+                    Some(other) => {
+                        log::warn!("[Upload {}] Unexpected storage class: {:?}", id, other);
+                        "Unknown"
+                    }
+                };
 
                 let captured_at = prepared.exif_metadata
                     .as_ref()

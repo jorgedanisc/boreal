@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+/// Storage tier for archived originals
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StorageTier {
+    #[default]
+    DeepArchive,
+    GlacierInstantRetrieval,
+}
+
 /// Vault credentials and encryption key stored in local JSON.
 /// Note: `name` and `visits` are stored in SQLite, not here.
 #[derive(Deserialize, Serialize, Clone, Default)]
@@ -12,6 +20,9 @@ pub struct VaultConfig {
     pub bucket: String,
     #[serde(default)]
     pub vault_key: String,
+    /// Storage tier for archived originals (DEEP_ARCHIVE or GLACIER_IR)
+    #[serde(default)]
+    pub storage_tier: StorageTier,
     // Legacy fields - kept for migration but ignored after first load
     #[serde(default, skip_serializing)]
     pub name: Option<String>,
@@ -38,6 +49,7 @@ impl VaultConfig {
         region: String,
         bucket: String,
         vault_key: String,
+        storage_tier: StorageTier,
     ) -> Self {
         Self {
             id,
@@ -46,6 +58,7 @@ impl VaultConfig {
             region,
             bucket,
             vault_key,
+            storage_tier,
             name: None,
             visits: None,
         }

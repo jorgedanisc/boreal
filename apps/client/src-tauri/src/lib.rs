@@ -663,6 +663,7 @@ async fn bootstrap_vault(
         bootstrap.region,
         bootstrap.bucket,
         BASE64.encode(kek),
+        crate::vault::StorageTier::DeepArchive, // Default to cheapest storage tier
     );
     // Set legacy name for migration
     config.name = Some("My Vault".to_string());
@@ -1814,7 +1815,24 @@ async fn add_files_to_queue(
     // Create proposed items to check fresh upload limits
     let temp_items: Vec<UploadItem> = valid_paths.clone()
         .into_iter()
-        .filter_map(|p| UploadItem::new(p, payload.fresh_upload, None).ok())
+        .filter_map(|p| {
+            let thumb = if let Some(map) = &payload.thumbnails {
+                let key = p.to_string_lossy().to_string();
+                if let Some(frames) = map.get(&key) {
+                    use base64::Engine;
+                    let decoded: Vec<Vec<u8>> = frames.iter()
+                        .filter_map(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+                        .collect();
+                    if decoded.is_empty() { None } else { Some(decoded) }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            UploadItem::new(p, payload.fresh_upload, thumb).ok()
+        })
         .collect();
 
     let fresh_upload_auto_disabled = manager.should_disable_fresh_upload(&temp_items);
@@ -2864,7 +2882,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info) // <--- Force Info level
+                .level(log::LevelFilter::Info)
+                .filter(|metadata| {
+                    // Filter out noisy libraries
+                    !metadata.target().starts_with("nom_exif") && 
+                    !metadata.target().starts_with("tracing")
+                })
                 .build(),
         )
         .plugin(tauri_plugin_fs::init())

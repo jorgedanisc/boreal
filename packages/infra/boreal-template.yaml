@@ -35,7 +35,7 @@ Resources:
       LifecycleConfiguration:
         Rules:
           # Fresh Upload: Files tagged with fresh=true stay in Standard for 60 days
-          # before transitioning to the selected storage tier
+          # before transitioning to the vault's selected storage tier
           - Id: 'ArchiveFreshOriginals'
             Prefix: 'originals/'
             Status: Enabled
@@ -45,17 +45,9 @@ Resources:
             Transitions:
               - TransitionInDays: 60
                 StorageClass: !Ref StorageTier
-          # Archive Upload: Files without fresh tag (or fresh=false) transition after 1 day
-          - Id: 'ArchiveOriginals'
-            Prefix: 'originals/'
-            Status: Enabled
-            TagFilters:
-              - Key: fresh
-                Value: 'false'
-            Transitions:
-              - TransitionInDays: 1
-                StorageClass: !Ref StorageTier
-          # Note: thumbnails/, db/, audio/, and vault-key.enc stay in Standard (no rule needed)
+          # NOTE: Files with fresh=false are uploaded directly to target storage class.
+          # Thumbnails and audio are uploaded directly to GLACIER_IR.
+          # This avoids S3 transition fees (~$0.02/GB) by uploading to the final tier immediately.
 
   # IAM User for the App
   VaultUser:

@@ -299,40 +299,149 @@ fn resize_and_process_frame(img: &image::DynamicImage, max_dim: u32) -> Result<(
 }
 
 /// Process an image file: create WebP original and thumbnail
-/// Uses image crate directly for reliability, with FFmpeg fallback
+/// Uses image crate directly for reliability, with FFmpeg fallback for exotic formats.
+/// IMPORTANT: If FFmpeg doesn't support the format (e.g., HEIC without libheif), we passthrough
+/// the original file to prevent data corruption.
 pub async fn process_image(
     transcoder: &impl Transcoder,
     path: &Path,
 ) -> Result<ProcessedMedia> {
     use image::GenericImageView;
 
-    // Load image using image crate, with FFmpeg fallback
-    let img = match image::open(path) {
-        Ok(i) => i,
-        Err(e) => {
-            log::warn!("Failed to open image directly ({}); attempting FFmpeg fallback...", e);
-            
-            let temp_dir = std::env::temp_dir();
-            let millis = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            let temp_png = temp_dir.join(format!("fallback_{}.png", millis));
-            
-            let args = vec![
-                "-i".to_string(),
-                path.to_string_lossy().to_string(),
-                "-y".to_string(),
-                temp_png.to_string_lossy().to_string(),
-            ];
-            
-            transcoder.run_ffmpeg(&args).await.context("FFmpeg fallback conversion failed")?;
-            
-            let i = image::open(&temp_png).context("Failed to open fallback PNG")?;
-            std::fs::remove_file(&temp_png).ok();
-            i
+    let ext = path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Formats that require special handling (FFmpeg may not support without extra libs)
+    let exotic_formats = ["heic", "heif", "raw", "cr2", "nef", "arw", "dng", "orf", "rw2"];
+    let is_exotic = exotic_formats.contains(&ext.as_str());
+    
+    // Known problematic formats for bundled FFmpeg that produce black/empty images
+    // We force passthrough for these to ensure data integrity
+    let force_passthrough = ["heic", "heif"].contains(&ext.as_str());
+
+    // Try to load the image using the image crate first
+    let img_result = image::open(path);
+    
+    // If image crate succeeded, proceed normally
+    if let Ok(img) = img_result {
+        return process_image_from_decoded(img, path).await;
+    }
+
+    // Image crate failed - decide whether to try FFmpeg or fallback to passthrough
+    let error = img_result.unwrap_err();
+    
+    // On mobile, we don't have FFmpeg sidecar, so we must skip directly to passthrough
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let use_ffmpeg = false;
+    
+    // On desktop, we can try FFmpeg, UNLESS checking known broken formats
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let use_ffmpeg = !force_passthrough;
+
+    if use_ffmpeg {
+        log::warn!(
+            "Failed to open image directly ({}) for format '{}'; attempting FFmpeg fallback...", 
+            error, ext
+        );
+
+        let temp_dir = std::env::temp_dir();
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let temp_png = temp_dir.join(format!("fallback_{}.png", millis));
+
+        // Try FFmpeg conversion
+        let args = vec![
+            "-i".to_string(),
+            path.to_string_lossy().to_string(),
+            "-pix_fmt".to_string(),
+            "rgb24".to_string(),
+            "-vf".to_string(),
+            "scale=in_range=full:out_range=full".to_string(),
+            "-y".to_string(),
+            temp_png.to_string_lossy().to_string(),
+        ];
+
+        log::info!("[FFmpeg Fallback] Converting {} to PNG...", ext.to_uppercase());
+        
+        // We act differently depending on whether the format is "exotic" (known to be unsupported by image crate)
+        // or just a corrupted file of a supported format.
+        if is_exotic {
+            log::info!("[FFmpeg Fallback] Format {} requires external decoding", ext.to_uppercase());
         }
-    };
+
+        let ffmpeg_result = transcoder.run_ffmpeg(&args).await;
+        
+        // Check if FFmpeg succeeded and produced a valid output
+        if ffmpeg_result.is_ok() {
+            let has_content = match std::fs::metadata(&temp_png) {
+                Ok(meta) => meta.len() > 1000, // Require at least 1KB
+                Err(_) => false,
+            };
+
+            if has_content {
+                // FFmpeg worked - try to open the converted PNG
+                match image::open(&temp_png) {
+                    Ok(img) => {
+                        std::fs::remove_file(&temp_png).ok();
+                        log::info!("[FFmpeg Fallback] Successfully converted {} to PNG", ext.to_uppercase());
+                        return process_image_from_decoded(img, path).await;
+                    }
+                    Err(e) => {
+                        log::warn!("[FFmpeg Fallback] Converted PNG is unreadable: {}", e);
+                    }
+                }
+            } else {
+                if !is_exotic {
+                    log::warn!("[FFmpeg Fallback] FFmpeg produced empty/invalid file for {}", ext);
+                }
+            }
+        } else {
+            if !is_exotic {
+               log::warn!("[FFmpeg Fallback] FFmpeg conversion failed for {}", ext);
+            }
+        }
+        // Cleanup temp file if it exists
+        std::fs::remove_file(&temp_png).ok();
+    } else {
+        log::warn!(
+            "[Image] Format {} not supported by built-in decoder and no external transcoder available (Mobile/Passthrough)", 
+            ext.to_uppercase()
+        );
+    }
+
+    // Fallback: Use passthrough for the original file
+    // This ensures we always upload the file, even if we can't process/compress it.
+    log::info!(
+        "[Image] Passthrough: Using original {} file (no compatible decoder)", 
+        ext.to_uppercase()
+    );
+
+    let original_bytes = std::fs::read(path)
+        .context("Failed to read original image file for passthrough")?;
+    let original_size = original_bytes.len() as u64;
+
+    // We can't generate a proper thumbnail without decoding the image
+    // Return None for thumbnail - the frontend will handle this gracefully
+    Ok(ProcessedMedia {
+        original: original_bytes,
+        original_extension: ext,
+        thumbnail: None,  // No thumbnail for unsupported formats
+        preview: None,
+        width: 0,   // Unknown dimensions
+        height: 0,
+    })
+}
+
+/// Helper: Process an already-decoded image to WebP
+async fn process_image_from_decoded(
+    img: image::DynamicImage,
+    path: &Path,
+) -> Result<ProcessedMedia> {
+    use image::GenericImageView;
 
     let (width, height) = img.dimensions();
 
@@ -346,7 +455,7 @@ pub async fn process_image(
         // Check against original file size
         let input_size = std::fs::metadata(path)
             .map(|m| m.len())
-            .unwrap_or(u64::MAX); // Force transcode if cannot read metadata
+            .unwrap_or(u64::MAX);
 
         if let Some(reason) = should_passthrough(input_size, webp_bytes.len() as u64) {
             log::info!(
@@ -359,11 +468,11 @@ pub async fn process_image(
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .unwrap_or("jpg") // Fallback, though we shouldn't hit this often
+                .unwrap_or("jpg")
                 .to_lowercase();
             (input_bytes, ext)
         } else {
-             log::info!(
+            log::info!(
                 "[Image] Transcoded: {:.1}% compression ({} -> {} bytes)",
                 (webp_bytes.len() as f64 / input_size as f64) * 100.0,
                 input_size,

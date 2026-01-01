@@ -224,11 +224,19 @@ jobs:
           # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
           
+          # Create Tauri cache directory
+          mkdir -p $HOME/.cache/tauri
+
+          # Copy linuxdeploy and plugin to Tauri cache so it uses them instead of downloading
+          # Tauri expects "linuxdeploy" (no extension) in the cache directory
+          cp /usr/local/bin/linuxdeploy $HOME/.cache/tauri/linuxdeploy
+          
           # Verify installation (export env var locally for this step too)
           echo "Verifying linuxdeploy installation..."
           export APPIMAGE_EXTRACT_AND_RUN=1
           linuxdeploy --version
           ls -la /usr/local/bin/linuxdeploy*
+          ls -la $HOME/.cache/tauri/
 
       - name: install frontend dependencies
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}
@@ -319,6 +327,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: true
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
@@ -333,6 +343,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: true
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

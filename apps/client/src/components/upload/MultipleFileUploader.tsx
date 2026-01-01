@@ -192,6 +192,70 @@ const extractFramesFromBlobUrl = (blobUrl: string): Promise<string[]> => {
   });
 };
 
+const extractThumbnailFromImage = async (path: string): Promise<string[]> => {
+  try {
+    const { readFile } = await import('@tauri-apps/plugin-fs');
+    const bytes = await readFile(path);
+    const ext = path.split('.').pop()?.toLowerCase();
+
+    // HEIC might need specific mime type for browser to accept it
+    let mimeType = 'image/jpeg';
+    if (ext === 'heic') mimeType = 'image/heic';
+    if (ext === 'heif') mimeType = 'image/heif';
+
+    const blob = new Blob([bytes], { type: mimeType });
+    const blobUrl = URL.createObjectURL(blob);
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 1920;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          const ratio = width / height;
+          if (width > height) {
+            width = maxDim;
+            height = maxDim / ratio;
+          } else {
+            height = maxDim;
+            width = maxDim * ratio;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(blobUrl);
+          resolve([]);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        // Export as JPEG
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+        URL.revokeObjectURL(blobUrl);
+        // Return 1 frame
+        resolve([dataUrl.split(',')[1]]);
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(blobUrl);
+        resolve([]);
+      };
+
+      img.src = blobUrl;
+    });
+  } catch (err) {
+    console.error("Failed to extract thumbnail", err);
+    return [];
+  }
+};
+
 const isVideoFile = (path: string) => {
   const ext = path.split('.').pop()?.toLowerCase();
   return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '');
@@ -200,6 +264,12 @@ const isVideoFile = (path: string) => {
 const isImageFile = (path: string) => {
   const ext = path.split('.').pop()?.toLowerCase();
   return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext || '');
+}
+
+// Formats that need explicit frontend thumbnail generation because backend passthrough bypasses FFmpeg
+const isPassthroughImage = (path: string) => {
+  const ext = path.split('.').pop()?.toLowerCase();
+  return ['heic', 'heif'].includes(ext || '');
 }
 
 // Component to handle async image loading from local FS via Blob URL
@@ -353,13 +423,19 @@ export function MultipleFileUploader() {
 
           await Promise.all(paths.map(async (p) => {
             if (isVideoFile(p)) {
-              toast.loading("generating thumbnail...");
+              toast.loading("Processing video thumbnail...");
               const frames = await extractFramesFromVideo(p);
-              console.log('[Thumbnail Debug] Extracted frames for', p, ':', frames.length, 'frames');
               if (frames.length > 0) {
                 thumbnails[p] = frames;
               }
               toast.dismiss();
+            } else if (isPassthroughImage(p)) {
+              // extract thumbnail for HEIC/HEIF
+              // toast.loading("Processing image thumbnail..."); // Optional, might be too noisy for fast drops
+              const frames = await extractThumbnailFromImage(p);
+              if (frames.length > 0) {
+                thumbnails[p] = frames;
+              }
             }
           }));
 
@@ -423,11 +499,19 @@ export function MultipleFileUploader() {
         // Let's limit concurrency if needed, but for now simple Promise.all
         // Only checking explicit video extensions to avoid overhead
 
-        const videoPaths = pathList.filter(isVideoFile);
-        if (videoPaths.length > 0) {
-          toast.message("Processing video thumbnails...");
-          await Promise.all(videoPaths.map(async (p) => {
-            const frames = await extractFramesFromVideo(p);
+        const validPaths = pathList.filter(p => isVideoFile(p) || isPassthroughImage(p));
+
+        if (validPaths.length > 0) {
+          toast.message("Processing thumbnails...");
+
+          await Promise.all(validPaths.map(async (p) => {
+            let frames: string[] = [];
+            if (isVideoFile(p)) {
+              frames = await extractFramesFromVideo(p);
+            } else if (isPassthroughImage(p)) {
+              frames = await extractThumbnailFromImage(p);
+            }
+
             if (frames.length > 0) {
               thumbnails[p] = frames;
             }

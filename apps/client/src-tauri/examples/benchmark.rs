@@ -6,10 +6,27 @@ use std::path::{Path, PathBuf};
 
 use std::time::Instant;
 
-/// Constants from CostAnalysis.md (USD per GB)
+/// === STORAGE COSTS (USD per GB per month) ===
 const COST_S3_STANDARD: f64 = 0.023;
 const COST_GLACIER_DEEP: f64 = 0.00099;
-const COST_S3_INSTANT: f64 = 0.004;
+const COST_S3_INSTANT: f64 = 0.004;  // Glacier Instant Retrieval
+
+/// === TRANSITION COSTS (one-time, USD per GB) ===
+/// Lifecycle transition from Standard to Glacier tiers
+const COST_TRANSITION_TO_GLACIER: f64 = 0.02;
+
+/// === PUT REQUEST COSTS (USD per 1,000 requests) ===
+const COST_PUT_STANDARD: f64 = 0.005;
+const COST_PUT_GLACIER_IR: f64 = 0.02;
+const COST_PUT_DEEP_ARCHIVE: f64 = 0.05;
+
+/// === RETRIEVAL COSTS (USD per GB) ===
+/// Glacier Instant Retrieval - immediate access
+const COST_RETRIEVE_GLACIER_IR: f64 = 0.03;
+/// Deep Archive Standard - 12 hour retrieval
+const COST_RETRIEVE_DA_STANDARD: f64 = 0.01;
+/// Deep Archive Bulk - 48 hour retrieval (cheapest)
+const COST_RETRIEVE_DA_BULK: f64 = 0.0025;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -364,9 +381,11 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     // === COST ANALYSIS ===
     if real_orig > 0 {
         // 1. DATASET VALIDATION
-        let av_orig = real_video_orig + real_audio_comp;
-        let av_fraction = av_orig as f64 / real_orig as f64;
-        let img_fraction = 1.0 - av_fraction;
+        // Use compressed sizes for consistency (video compressed + audio compressed)
+        let av_comp = real_video_comp + real_audio_comp;
+        let total_comp = av_comp + real_img_comp;
+        let av_fraction = av_comp as f64 / total_comp as f64;
+        let img_fraction = real_img_comp as f64 / total_comp as f64;
         let av_deviation = (av_fraction - 0.65_f64).abs();
         let img_deviation = (img_fraction - 0.33_f64).abs();
         
@@ -379,7 +398,10 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         // 2. PROJECTED SCENARIOS
         report.push_str("\n## Cost Scenarios (1TB Library)\n");
         report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
-        report.push_str("> **Note:** Audio is always stored on S3 Standard (not archived).\n\n");
+        report.push_str("> **Architecture Note:** Files are uploaded directly to their target storage class:\n");
+        report.push_str("> - Thumbnails & Audio → GLACIER_IR (instant access)\n");
+        report.push_str("> - Originals → DEEP_ARCHIVE or GLACIER_IR (vault setting)\n");
+        report.push_str("> - Fresh uploads → S3 Standard (transitions after 60 days)\n\n");
         
         let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
         
@@ -394,9 +416,16 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         let audio_gb = (tb_bytes * audio_fraction) / (1024.0 * 1024.0 * 1024.0);
         let video_img_gb = (tb_bytes * video_img_fraction) / (1024.0 * 1024.0 * 1024.0);
         
-        // Costs
-        let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
-        let cost_audio = audio_gb * COST_S3_STANDARD;
+        // Costs - thumbnails and audio now use GLACIER_IR instead of Standard
+        let cost_thumbs = thumbs_gb * COST_S3_INSTANT;  // GLACIER_IR
+        let cost_audio = audio_gb * COST_S3_INSTANT;    // GLACIER_IR
+        
+        // Transition fee savings for direct upload
+        let transition_savings_per_tb = 1024.0 * COST_TRANSITION_TO_GLACIER;
+        
+        report.push_str("### 💰 Direct Upload Savings\n");
+        report.push_str(&format!("By uploading directly to Glacier instead of transitioning from Standard:\n"));
+        report.push_str(&format!("- **Saves ${:.2}/TB** in one-time transition fees\n\n", transition_savings_per_tb));
         
         // Scenario A: DESKTOP (compress everything)
         let dt_da_cost = video_img_gb * COST_GLACIER_DEEP;
@@ -426,6 +455,82 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             mo_da_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_audio + cost_thumbs));
         report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
             mo_ir_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_audio + cost_thumbs));
+        
+        // === UPLOAD REQUEST COSTS ===
+        report.push_str("\n---\n\n## 📤 Upload Request Costs\n\n");
+        report.push_str("One-time costs when uploading files (PUT requests per 1,000 files).\n\n");
+        report.push_str("| Storage Class | Cost/1K Requests | Cost per 10K Files | Cost per 100K Files |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| S3 Standard | ${:.3} | ${:.2} | ${:.2} |\n", 
+            COST_PUT_STANDARD, COST_PUT_STANDARD * 10.0, COST_PUT_STANDARD * 100.0));
+        report.push_str(&format!("| Glacier IR | ${:.3} | ${:.2} | ${:.2} |\n", 
+            COST_PUT_GLACIER_IR, COST_PUT_GLACIER_IR * 10.0, COST_PUT_GLACIER_IR * 100.0));
+        report.push_str(&format!("| Deep Archive | ${:.3} | ${:.2} | ${:.2} |\n", 
+            COST_PUT_DEEP_ARCHIVE, COST_PUT_DEEP_ARCHIVE * 10.0, COST_PUT_DEEP_ARCHIVE * 100.0));
+        report.push_str("\n> **Note:** Direct upload to Glacier/Deep Archive costs slightly more per request but saves $0.02/GB in transition fees.\n");
+        
+        // === FRESH UPLOAD TRANSITION COSTS ===
+        report.push_str("\n---\n\n## 🔄 Fresh Upload Transition Costs (After 60 Days)\n\n");
+        report.push_str("Files uploaded with `fresh=true` stay in S3 Standard for 60 days, then transition automatically.\n\n");
+        report.push_str("| Metric | Glacier IR | Deep Archive |\n");
+        report.push_str("|---|---|---|\n");
+        report.push_str(&format!("| Transition Fee | ${:.3}/GB | ${:.3}/GB |\n", 
+            COST_TRANSITION_TO_GLACIER, COST_TRANSITION_TO_GLACIER));
+        report.push_str(&format!("| Per 100 GB | ${:.2} | ${:.2} |\n", 
+            COST_TRANSITION_TO_GLACIER * 100.0, COST_TRANSITION_TO_GLACIER * 100.0));
+        report.push_str(&format!("| Per 1 TB | ${:.2} | ${:.2} |\n", 
+            COST_TRANSITION_TO_GLACIER * 1024.0, COST_TRANSITION_TO_GLACIER * 1024.0));
+
+        // 60-day Standard storage cost before transition
+        let standard_60_day_cost = COST_S3_STANDARD * 2.0; // 2 months
+        report.push_str(&format!("\n**Additional 60-day Standard storage cost:**\n"));
+        report.push_str(&format!("- Per 100 GB: ${:.2}\n", standard_60_day_cost * 100.0));
+        report.push_str(&format!("- Per 1 TB: ${:.2}\n\n", standard_60_day_cost * 1024.0));
+        
+        // === RETRIEVAL COSTS ===
+        report.push_str("\n---\n\n## 📥 Retrieval Costs\n\n");
+        report.push_str("Cost to retrieve archived originals (e.g., for download or editing).\n\n");
+        report.push_str("| Storage Class | Retrieval Tier | Cost/GB | Wait Time | Per 100 GB | Per 1 TB |\n");
+        report.push_str("|---|---|---|---|---|---|\n");
+        report.push_str(&format!("| Glacier IR | Instant | ${:.3} | Instant | ${:.2} | ${:.2} |\n", 
+            COST_RETRIEVE_GLACIER_IR, COST_RETRIEVE_GLACIER_IR * 100.0, COST_RETRIEVE_GLACIER_IR * 1024.0));
+        report.push_str(&format!("| Deep Archive | Standard | ${:.3} | 12 hours | ${:.2} | ${:.2} |\n", 
+            COST_RETRIEVE_DA_STANDARD, COST_RETRIEVE_DA_STANDARD * 100.0, COST_RETRIEVE_DA_STANDARD * 1024.0));
+        report.push_str(&format!("| Deep Archive | Bulk | ${:.4} | 48 hours | ${:.2} | ${:.2} |\n", 
+            COST_RETRIEVE_DA_BULK, COST_RETRIEVE_DA_BULK * 100.0, COST_RETRIEVE_DA_BULK * 1024.0));
+        
+        // === RETRIEVAL PROJECTIONS BASED ON BENCHMARK DATA ===
+        report.push_str("\n### 📊 Retrieval Cost Projections (Based on Benchmark Data)\n\n");
+        report.push_str(&format!("Using projected thumbnail size of **{:.2} GB** per 1TB library:\n\n", thumbs_gb));
+        
+        let thumbs_retrieve_ir = thumbs_gb * COST_RETRIEVE_GLACIER_IR;
+        report.push_str(&format!("**Thumbnails (always on Glacier IR):**\n"));
+        report.push_str(&format!("- Retrieve all thumbnails: ${:.2} ({:.2} GB)\n\n", thumbs_retrieve_ir, thumbs_gb));
+        
+        let originals_gb = video_img_gb;
+        let orig_retrieve_ir = originals_gb * COST_RETRIEVE_GLACIER_IR;
+        let orig_retrieve_da_std = originals_gb * COST_RETRIEVE_DA_STANDARD;
+        let orig_retrieve_da_bulk = originals_gb * COST_RETRIEVE_DA_BULK;
+        
+        report.push_str(&format!("**Originals ({:.2} GB projected per 1TB library):**\n", originals_gb));
+        report.push_str("| Scenario | Glacier IR | Deep Archive (Std) | Deep Archive (Bulk) |\n");
+        report.push_str("|---|---|---|---|\n");
+        report.push_str(&format!("| Retrieve 100% | ${:.2} | ${:.2} (12h) | ${:.2} (48h) |\n", 
+            orig_retrieve_ir, orig_retrieve_da_std, orig_retrieve_da_bulk));
+        report.push_str(&format!("| Retrieve 10% | ${:.2} | ${:.2} (12h) | ${:.2} (48h) |\n", 
+            orig_retrieve_ir * 0.1, orig_retrieve_da_std * 0.1, orig_retrieve_da_bulk * 0.1));
+        report.push_str(&format!("| Retrieve 1% | ${:.2} | ${:.2} (12h) | ${:.2} (48h) |\n", 
+            orig_retrieve_ir * 0.01, orig_retrieve_da_std * 0.01, orig_retrieve_da_bulk * 0.01));
+
+        // === COMMERCIAL COMPARISON ===
+        report.push_str("\n---\n\n## Commercial Provider Comparison\n\n");
+        report.push_str("| Provider | Cost per TB/month |\n");
+        report.push_str("|---|---|\n");
+        report.push_str("| **Google One / Google Photos** | $5.00 |\n");
+        report.push_str("| **iCloud** | $5.00 |\n");
+        report.push_str("| **Dropbox** | $6.00 |\n");
+        report.push_str("| **OneDrive** | $6.99 |\n");
+        report.push_str("| **Amazon Photos (Prime)** | ~$7.50 |\n");
     }
     
     report
