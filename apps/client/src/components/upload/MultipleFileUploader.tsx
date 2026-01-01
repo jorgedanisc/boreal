@@ -365,7 +365,6 @@ export function MultipleFileUploader() {
 
           console.log('[Thumbnail Debug] thumbnails map:', Object.keys(thumbnails));
           await addFiles(paths, thumbnails);
-          toast.success(`Added ${paths.length} item${paths.length > 1 ? 's' : ''}`);
         }
       });
       if (!isMounted) { u3(); return; }
@@ -436,7 +435,6 @@ export function MultipleFileUploader() {
         }
 
         await addFiles(pathList, thumbnails);
-        toast.success(`Added ${pathList.length} files`);
       }
     } catch (err) {
       console.error("Failed to open file dialog", err);

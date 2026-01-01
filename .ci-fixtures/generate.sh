@@ -3,6 +3,8 @@ set -e
 
 OUTPUT_DIR=$1
 
+# Potentially useful in the future: https://www.dpreview.com/sample-galleries
+
 if [ -z "$OUTPUT_DIR" ]; then
   echo "Usage: $0 <output-directory>"
   exit 1
@@ -185,11 +187,34 @@ done
 echo "  Downloaded $IMG_COUNT images"
 
 # =============================================================================
-# SECTION 2.1: VARIANT IMAGE GENERATION (Low Q, Screenshots, Docs)
+# SECTION 2.1: DPReview SAMPLE IMAGES (Real camera JPEG samples)
+# High-quality camera samples from DPReview for realistic compression testing
+# =============================================================================
+echo ""
+echo "[2.1/5] Copying DPReview camera sample images..."
+
+DPREVIEW_LOCAL_DIR="$(dirname "$0")/../assets/benchmarking/images"
+
+if [ -d "$DPREVIEW_LOCAL_DIR" ]; then
+    DPREVIEW_COUNT=0
+    for img in "$DPREVIEW_LOCAL_DIR"/real_*.jpg; do
+        if [ -f "$img" ]; then
+            ((DPREVIEW_COUNT++)) || true
+            cp "$img" "$OUTPUT_DIR/real_img_dpreview_${DPREVIEW_COUNT}.jpg"
+            echo "  [COPY] $(basename "$img") -> real_img_dpreview_${DPREVIEW_COUNT}.jpg"
+        fi
+    done
+    echo "  Copied $DPREVIEW_COUNT DPReview camera samples"
+else
+    echo "  [SKIP] DPReview directory not found: $DPREVIEW_LOCAL_DIR"
+fi
+
+# =============================================================================
+# SECTION 2.2: VARIANT IMAGE GENERATION (Low Q, Screenshots, Docs)
 # Addresses "WebP Inflation" investigation by adding diverse compressible types
 # =============================================================================
 echo ""
-echo "[2.1/5] Generating variant images (Low-Q, Screenshots, Docs)..."
+echo "[2.2/5] Generating variant images (Low-Q, Screenshots, Docs)..."
 
 # 1. Low-Quality JPEGs (WhatsApp simulation)
 # Take first 5 high-res images and degrade them (resize + low quality)

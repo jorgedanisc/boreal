@@ -364,10 +364,11 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     // === COST ANALYSIS ===
     if real_orig > 0 {
         // 1. DATASET VALIDATION
-        let av_fraction = real_av_orig as f64 / real_orig as f64;
+        let av_orig = real_video_orig + real_audio_comp;
+        let av_fraction = av_orig as f64 / real_orig as f64;
         let img_fraction = 1.0 - av_fraction;
-        let av_deviation = (av_fraction - 0.65).abs();
-        let img_deviation = (img_fraction - 0.33).abs();
+        let av_deviation = (av_fraction - 0.65_f64).abs();
+        let img_deviation = (img_fraction - 0.33_f64).abs();
         
         report.push_str("\n## Dataset Composition Validation\n");
         report.push_str("| Metric | Value | Target | Status |\n");
