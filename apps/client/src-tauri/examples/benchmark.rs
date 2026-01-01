@@ -9,12 +9,7 @@ use std::time::Instant;
 /// Constants from CostAnalysis.md (USD per GB)
 const COST_S3_STANDARD: f64 = 0.023;
 const COST_GLACIER_DEEP: f64 = 0.00099;
-const COST_S3_INSTANT: f64 = 0.004; // Additive to Standard for IR tier? No, it's a class.
-                                    // Checking CostAnalysis.md:
-                                    // Instant Retrieval: $4.00/TB/month = $0.004/GB/month
-                                    // Deep Archive: $0.99/TB/month = $0.00099/GB/month
-                                    // Standard: $23.00/TB/month = $0.023/GB/month
-                                    // Thumbnails (Standard): $0.023/GB/month
+const COST_S3_INSTANT: f64 = 0.004;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -310,15 +305,16 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str("|---|---|---|---|---|---|---|---|\n");
 
     let mut real_orig = 0u64;
-    let mut real_comp = 0u64; // Actual compressed size (includes passthrough)
+    let mut real_comp = 0u64;
     let mut real_thumb = 0u64;
-    let mut real_av_orig = 0u64;
+    let mut real_video_orig = 0u64;
+    let mut real_video_comp = 0u64;
+    let mut real_audio_comp = 0u64;
     let mut real_img_comp = 0u64;
     
     for r in &real {
         let ssim_str = r.ssim.map(|s| format!("{:.4}", s)).unwrap_or_else(|| "-".to_string());
             
-        // Use status from result (which can be "Passthrough" if app logic decided so)
         let status_icon = if r.status == "Passthrough" { "↩️" } else { 
             if r.compression_ratio > 1.0 { "⚠️" } else { "✅" }
         };
@@ -341,10 +337,17 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         real_comp += r.compressed_size_bytes;
         real_thumb += r.thumbnail_size_bytes;
         
-        if r.media_type == "Video" || r.media_type == "Audio" {
-            real_av_orig += r.original_size_bytes;
-        } else {
-            real_img_comp += r.compressed_size_bytes;
+        match r.media_type.as_str() {
+            "Video" => {
+                real_video_orig += r.original_size_bytes;
+                real_video_comp += r.compressed_size_bytes;
+            }
+            "Audio" => {
+                real_audio_comp += r.compressed_size_bytes;
+            }
+            _ => {
+                real_img_comp += r.compressed_size_bytes;
+            }
         }
     }
 
@@ -375,44 +378,53 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         // 2. PROJECTED SCENARIOS
         report.push_str("\n## Cost Scenarios (1TB Library)\n");
         report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
+        report.push_str("> **Note:** Audio is always stored on S3 Standard (not archived).\n\n");
         
         let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
+        
+        // Calculate fractions based on real samples
         let thumb_fraction = real_thumb as f64 / real_orig as f64;
+        let audio_fraction = real_audio_comp as f64 / real_orig as f64;
+        let video_img_comp = real_video_comp + real_img_comp;
+        let video_img_fraction = video_img_comp as f64 / real_orig as f64;
+        
+        // Project to 1TB
         let thumbs_gb = (tb_bytes * thumb_fraction) / (1024.0 * 1024.0 * 1024.0);
+        let audio_gb = (tb_bytes * audio_fraction) / (1024.0 * 1024.0 * 1024.0);
+        let video_img_gb = (tb_bytes * video_img_fraction) / (1024.0 * 1024.0 * 1024.0);
+        
+        // Costs
         let cost_thumbs = thumbs_gb * COST_S3_STANDARD;
+        let cost_audio = audio_gb * COST_S3_STANDARD;
         
-        // Scenario A: DESKTOP
-        let desktop_ratio = real_comp as f64 / real_orig as f64;
-        let desktop_orig_gb = (tb_bytes * desktop_ratio) / (1024.0 * 1024.0 * 1024.0);
-        
-        let dt_da_cost = desktop_orig_gb * COST_GLACIER_DEEP;
-        let dt_ir_cost = desktop_orig_gb * COST_S3_INSTANT;
+        // Scenario A: DESKTOP (compress everything)
+        let dt_da_cost = video_img_gb * COST_GLACIER_DEEP;
+        let dt_ir_cost = video_img_gb * COST_S3_INSTANT;
         
         report.push_str("### 🖥️ Desktop (Compress Everything)\n");
-        report.push_str("| Storage Class | Original Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
-        report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            dt_da_cost, desktop_orig_gb, cost_thumbs, thumbs_gb, dt_da_cost + cost_thumbs));
-        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            dt_ir_cost, desktop_orig_gb, cost_thumbs, thumbs_gb, dt_ir_cost + cost_thumbs));
+        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
+        report.push_str("|---|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_da_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_da_cost + cost_audio + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_ir_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_ir_cost + cost_audio + cost_thumbs));
         report.push_str("\n");
 
-        // Scenario B: MOBILE
-        // Mobile uses: Original Video/Audio (real_av_orig) + Compressed Images (real_img_comp)
-        let mobile_total_size = real_av_orig + real_img_comp;
-        let mobile_ratio = mobile_total_size as f64 / real_orig as f64;
-        let mobile_orig_gb = (tb_bytes * mobile_ratio) / (1024.0 * 1024.0 * 1024.0);
+        // Scenario B: MOBILE (compress images only, videos stay original)
+        let mobile_video_img = real_video_orig + real_img_comp;
+        let mobile_video_img_fraction = mobile_video_img as f64 / real_orig as f64;
+        let mobile_video_img_gb = (tb_bytes * mobile_video_img_fraction) / (1024.0 * 1024.0 * 1024.0);
 
-        let mo_da_cost = mobile_orig_gb * COST_GLACIER_DEEP;
-        let mo_ir_cost = mobile_orig_gb * COST_S3_INSTANT;
+        let mo_da_cost = mobile_video_img_gb * COST_GLACIER_DEEP;
+        let mo_ir_cost = mobile_video_img_gb * COST_S3_INSTANT;
 
         report.push_str("### 📱 Mobile (Compress Images Only)\n");
-        report.push_str("| Storage Class | Original Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
-        report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            mo_da_cost, mobile_orig_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_thumbs));
-        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            mo_ir_cost, mobile_orig_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_thumbs));
+        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
+        report.push_str("|---|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_da_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_audio + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_ir_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_audio + cost_thumbs));
     }
     
     report
