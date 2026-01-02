@@ -330,7 +330,7 @@ jobs:
       # Build with Tauri WITHOUT code signing (test builds, PRs, etc.)
       - name: Build with Tauri (unsigned)
         if: ${{ !inputs.sign-binaries }}
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -348,7 +348,7 @@ jobs:
       # Build with Tauri WITH code signing (release builds)
       - name: Build with Tauri (signed)
         if: ${{ inputs.sign-binaries }}
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
