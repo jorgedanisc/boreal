@@ -383,8 +383,8 @@ export function GlobalPhotoSlider({ visible, onClose, index, onIndexChange, phot
         console.log('[Original] Status:', status);
         setOriginalStatus(status);
         // Auto-load if cached or restored
-        if (status.cached) {
-          console.log('[Original] Cache detected, auto-loading...');
+        if (status.cached || status.status === 'restored') {
+          console.log('[Original] Cache/Restored detected, auto-loading...');
           setIsLoadingOriginal(true);
           getOriginal(currentPhoto.id).then(base64 => {
             // Determine MIME type based on media_type (same logic as loadOriginalImage)

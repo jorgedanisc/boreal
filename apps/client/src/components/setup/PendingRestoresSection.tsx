@@ -1,16 +1,21 @@
 import { Button } from '@/components/ui/button';
-import { getPendingRestoresForVault, getVaults, PendingRestore } from '@/lib/vault';
-import { IconCheck, IconClock, IconPhoto } from '@tabler/icons-react';
+import { checkOriginalStatus, getPendingRestoresForVault, getVaults, PendingRestore, VaultPublic } from '@/lib/vault';
+import { IconArrowUpRight, IconCheck, IconCircleDotted, IconClock, IconPhoto } from '@tabler/icons-react';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
 interface PendingRestoreWithVault extends PendingRestore {
   vault_name?: string;
+  vault_id: string;
 }
 
 const MAX_VISIBLE_RESTORES = 5;
 
-export function PendingRestoresSection() {
+interface PendingRestoresSectionProps {
+  onOpenPhoto?: (vaultId: string, photoId: string) => void;
+}
+
+export function PendingRestoresSection({ onOpenPhoto }: PendingRestoresSectionProps) {
   const [pendingRestores, setPendingRestores] = useState<PendingRestoreWithVault[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -20,12 +25,33 @@ export function PendingRestoresSection() {
         const vaults = await getVaults();
         const allRestores: PendingRestoreWithVault[] = [];
 
+        // Fetch pending restores for all vaults
         for (const vault of vaults) {
           const restores = await getPendingRestoresForVault(vault.id);
-          for (const restore of restores) {
+
+          // Check status for each restoring item
+          const updatedRestores = await Promise.all(restores.map(async (restore) => {
+            if (restore.status === 'restoring') {
+              try {
+                // Perform a live check (HEAD request via backend)
+                const status = await checkOriginalStatus(restore.photo_id);
+                if (status.status === 'available' || status.status === 'restored' || status.status === 'cached') {
+
+                  // If it's ready, return updated object
+                  return { ...restore, status: 'ready' } as PendingRestore;
+                }
+              } catch (e) {
+                // Ignore errors, keep original status
+              }
+            }
+            return restore;
+          }));
+
+          for (const restore of updatedRestores) {
             allRestores.push({
               ...restore,
               vault_name: vault.name,
+              vault_id: vault.id,
             });
           }
         }
@@ -80,11 +106,16 @@ export function PendingRestoresSection() {
               <div
                 key={restore.photo_id}
                 className={`flex items-center gap-3 p-3 rounded-lg backdrop-blur-xl ${isReady
-                  ? 'bg-green-500/10 border border-green-500/20'
+                  ? 'bg-green-500/10 border border-green-500/20 group cursor-pointer hover:bg-green-500/20 transition-colors'
                   : 'bg-yellow-500/10 border border-yellow-500/20'
                   }`}
+                onClick={() => {
+                  if (isReady && onOpenPhoto) {
+                    onOpenPhoto(restore.vault_id, restore.photo_id);
+                  }
+                }}
               >
-                <div className={`p-2 rounded-full ${isReady ? 'bg-green-500/20' : 'bg-yellow-500/20'}`}>
+                <div className={`p-2 relative rounded-full ${isReady ? 'bg-green-500/20' : 'bg-yellow-500/20'}`}>
                   {isReady
                     ? <IconCheck className="w-4 h-4 text-green-500" />
                     : <IconClock className="w-4 h-4 text-yellow-500" />
@@ -96,7 +127,11 @@ export function PendingRestoresSection() {
                     {isReady ? 'Ready to download' : 'Restoring...'} • {formatBytes(restore.size_bytes)}
                   </p>
                 </div>
-                {isReady && <IconPhoto className="w-4 h-4 text-muted-foreground" />}
+                {isReady && (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <IconArrowUpRight className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                )}
               </div>
             );
           })}

@@ -209,36 +209,48 @@ jobs:
           # 'squashfs-tools' is needed for creating the AppImage filesystem
           sudo apt-get install -y fuse libfuse2 file squashfs-tools
           
-          # Download linuxdeploy for aarch64 (using the version Tauri expects)
-          sudo wget -q https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-aarch64.AppImage -O /usr/local/bin/linuxdeploy
-          sudo chmod +x /usr/local/bin/linuxdeploy
-          
-          # Download linuxdeploy-plugin-appimage for aarch64
-          sudo wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O /usr/local/bin/linuxdeploy-plugin-appimage
-          sudo chmod +x /usr/local/bin/linuxdeploy-plugin-appimage
-
-          # Create symlinks to ensure they are found by name
-          sudo ln -sf /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-aarch64.AppImage
-          sudo ln -sf /usr/local/bin/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
-          
-          # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
-          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
-          
           # Create Tauri cache directory
           mkdir -p $HOME/.cache/tauri
 
-          # Copy linuxdeploy and plugin to Tauri cache so it uses them instead of downloading
-          # Use specific filenames matching what Tauri tries to download
+          # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          
+          # 1. Download linuxdeploy for aarch64 (Official Continuous to match plugin)
+          # We use the official one to ensure compatibility with the plugin
+          echo "Downloading linuxdeploy..."
+          sudo wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O /usr/local/bin/linuxdeploy
+          sudo chmod +x /usr/local/bin/linuxdeploy
+          
+          # 2. Download linuxdeploy-plugin-appimage for aarch64
+          echo "Downloading linuxdeploy-plugin-appimage..."
+          sudo wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O /usr/local/bin/linuxdeploy-plugin-appimage
+          sudo chmod +x /usr/local/bin/linuxdeploy-plugin-appimage
+
+          # 3. Download AppRun for aarch64 (Required by Tauri for AppImage)
+          echo "Downloading AppRun..."
+          sudo wget -q https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-aarch64 -O /usr/local/bin/AppRun-aarch64
+          sudo chmod +x /usr/local/bin/AppRun-aarch64
+
+          # Create symlinks to ensure they are found by name if needed by manual calls
+          sudo ln -sf /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-aarch64.AppImage
+          sudo ln -sf /usr/local/bin/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
+
+          # Copy to Tauri cache to prevent re-downloads during build
+          # Tauri looks for these specific names
           cp /usr/local/bin/linuxdeploy $HOME/.cache/tauri/linuxdeploy-aarch64.AppImage
           cp /usr/local/bin/linuxdeploy-plugin-appimage $HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage
-          chmod +x $HOME/.cache/tauri/linuxdeploy-aarch64.AppImage
-          chmod +x $HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage
+          cp /usr/local/bin/AppRun-aarch64 $HOME/.cache/tauri/AppRun-aarch64
           
-          # Verify installation (export env var locally for this step too)
+          # Verify installation
           echo "Verifying linuxdeploy installation..."
-          export APPIMAGE_EXTRACT_AND_RUN=1
           linuxdeploy --version
-          ls -la /usr/local/bin/linuxdeploy*
+          
+          echo "Verifying linuxdeploy-plugin-appimage..."
+          # We call it directly to ensure it runs (checking for FUSE/extraction issues)
+          /usr/local/bin/linuxdeploy-plugin-appimage --version || echo "Plugin version check failed, but continuing..."
+          
+          echo "Tauri cache contents:"
           ls -la $HOME/.cache/tauri/
 
       - name: install frontend dependencies

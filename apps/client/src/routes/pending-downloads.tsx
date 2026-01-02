@@ -1,13 +1,15 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
-import { IconClock, IconCheck, IconPhoto, IconArrowLeft } from '@tabler/icons-react';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { IconClock, IconCheck, IconPhoto, IconArrowLeft, IconArrowUpRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { getPendingRestoresForVault, PendingRestore, getVaults } from '@/lib/vault';
+import { getPendingRestoresForVault, PendingRestore, getVaults, checkOriginalStatus, loadVault } from '@/lib/vault';
 import { Button } from '@/components/ui/button';
 import { type } from '@tauri-apps/plugin-os';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 interface PendingRestoreWithVault extends PendingRestore {
   vault_name?: string;
+  vault_id: string;
 }
 
 export const Route = createFileRoute('/pending-downloads')({
@@ -18,6 +20,7 @@ function PendingDownloadsPage() {
   const [pendingRestores, setPendingRestores] = useState<PendingRestoreWithVault[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDesktop, setIsDesktop] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const osType = type();
@@ -34,10 +37,28 @@ function PendingDownloadsPage() {
 
         for (const vault of vaults) {
           const restores = await getPendingRestoresForVault(vault.id);
-          for (const restore of restores) {
+
+          // Check status for each restoring item
+          const updatedRestores = await Promise.all(restores.map(async (restore) => {
+            if (restore.status === 'restoring') {
+              try {
+                // Perform a live check
+                const status = await checkOriginalStatus(restore.photo_id);
+                if (status.status === 'available' || status.status === 'restored' || status.status === 'cached') {
+                  return { ...restore, status: 'ready' } as PendingRestore;
+                }
+              } catch (e) {
+                // Ignore
+              }
+            }
+            return restore;
+          }));
+
+          for (const restore of updatedRestores) {
             allRestores.push({
               ...restore,
               vault_name: vault.name,
+              vault_id: vault.id,
             });
           }
         }
@@ -52,6 +73,16 @@ function PendingDownloadsPage() {
 
     fetchPendingRestores();
   }, []);
+
+  const handleOpenPhoto = async (vaultId: string, photoId: string) => {
+    try {
+      await loadVault(vaultId);
+      navigate({ to: "/gallery", search: { photoId } });
+    } catch (e) {
+      console.error("Failed to load vault:", e);
+      toast.error("Failed to load vault");
+    }
+  };
 
   const restoring = pendingRestores.filter(r => r.status === 'restoring');
   const ready = pendingRestores.filter(r => r.status === 'ready');
@@ -103,7 +134,8 @@ function PendingDownloadsPage() {
                 {ready.map((restore) => (
                   <div
                     key={restore.photo_id}
-                    className="flex items-center gap-3 p-4 rounded-xl bg-green-500/10 border border-green-500/20"
+                    className="flex items-center gap-3 p-4 rounded-xl bg-green-500/10 border border-green-500/20 group cursor-pointer hover:bg-green-500/20 transition-colors"
+                    onClick={() => handleOpenPhoto(restore.vault_id, restore.photo_id)}
                   >
                     <div className="p-2 rounded-full bg-green-500/20">
                       <IconCheck className="w-4 h-4 text-green-500" />
@@ -114,7 +146,9 @@ function PendingDownloadsPage() {
                         {restore.vault_name} • {formatBytes(restore.size_bytes)}
                       </p>
                     </div>
-                    <IconPhoto className="w-4 h-4 text-muted-foreground" />
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <IconArrowUpRight className="w-4 h-4 text-muted-foreground" />
+                    </div>
                   </div>
                 ))}
               </div>

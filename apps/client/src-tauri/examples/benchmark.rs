@@ -483,7 +483,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
 
         // === MONTHLY COST SCENARIOS ===
         report.push_str("\n---\n\n## Monthly Cost Scenarios (1TB Library)\n");
-        report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
+        report.push_str("Projections based on **actual measured sizes**.\n\n");
 
         // Scenario A: DESKTOP (compress everything)
         let dt_da_cost = video_img_gb * COST_GLACIER_DEEP;

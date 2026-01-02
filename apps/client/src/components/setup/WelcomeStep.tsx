@@ -254,7 +254,20 @@ export function WelcomeStep({ onCreateVault }: WelcomeStepProps) {
 
         {/* Pending Original Restores */}
         <div className="mt-12">
-          {vaults.length > 0 && <PendingRestoresSection />}
+          {vaults.length > 0 && (
+            <PendingRestoresSection
+              onOpenPhoto={async (vaultId, photoId) => {
+                setOpenLoading(vaultId);
+                try {
+                  await loadVault(vaultId);
+                  navigate({ to: "/gallery", search: { photoId } });
+                } catch (e) {
+                  console.error("Failed to load vault:", e);
+                  setOpenLoading(null);
+                }
+              }}
+            />
+          )}
         </div>
       </div >
 

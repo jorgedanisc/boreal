@@ -13,6 +13,7 @@ import { VirtualizedMasonryGrid, MediaItem, LayoutItem } from '@/components/gall
 import { GlobalPhotoSlider, PhotoMetadata } from '@/components/gallery/PhotoLightbox';
 import 'react-photo-view/dist/react-photo-view.css';
 import { type } from '@tauri-apps/plugin-os';
+import { useLocation } from '@tanstack/react-router';
 
 export default function Gallery() {
   const { setSubtitle } = useGalleryLayout();
@@ -28,6 +29,7 @@ export default function Gallery() {
 
   // Lightbox State
   const [lightboxIndex, setLightboxIndex] = useState(-1);
+  const search = useLocation().search as { photoId?: string };
 
   // Audio Player State
   const [audioPlayer, setAudioPlayer] = useState<{ id: string; filename: string } | null>(null);
@@ -291,9 +293,23 @@ export default function Gallery() {
         iso: p.iso,
         f_number: p.f_number,
         exposure_time: p.exposure_time,
-        media_type: p.media_type, // Critical for video detection in lightbox
       }));
   }, [sortedPhotos, activeVault]);
+
+  // Effect to handle deep linking via search param (Moved here to access lightboxPhotos)
+  useEffect(() => {
+    if (search.photoId && lightboxPhotos.length > 0) {
+      const idx = lightboxPhotos.findIndex(p => p.id === search.photoId);
+      if (idx !== -1) {
+        // Only set if not already set (prevent loop if we were handling close)
+        // But here we want to enforce it if URL changes.
+        // Actually, better to check if it matches current.
+        if (lightboxIndex !== idx) {
+          setLightboxIndex(idx);
+        }
+      }
+    }
+  }, [search.photoId, lightboxPhotos]); // We rely on lightboxPhotos being populated
 
   const handleItemClick = (index: number) => {
     const item = mediaItems[index];
