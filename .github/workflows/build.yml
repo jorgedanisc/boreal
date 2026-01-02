@@ -203,58 +203,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
 
-      - name: Pre-install linuxdeploy for ARM64
+      - name: Pre-install linuxdeploy for ARM64 (cache-only, writable)
         if: inputs.platform == 'ubuntu-22.04-arm'
+        shell: bash
         run: |
-          set -e
-          # Pre-download and install linuxdeploy tools for ARM64
-          # 'file' is needed by linuxdeploy to check binary types
-          # 'squashfs-tools' is needed for creating the AppImage filesystem
+          set -euxo pipefail
+
+          # Install dependencies (no 'fuse' package, only libfuse2 per AppImage docs)
+          sudo apt-get update
           sudo apt-get install -y libfuse2 file squashfs-tools
-          
-          # Create Tauri cache directory
-          mkdir -p $HOME/.cache/tauri
+
+          # Create Tauri cache directory (user-writable, no root)
+          mkdir -p "$HOME/.cache/tauri"
 
           # Set APPIMAGE_EXTRACT_AND_RUN to avoid FUSE issues in CI
-          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> $GITHUB_ENV
-          export APPIMAGE_EXTRACT_AND_RUN=1
-          
-          # 1. Download linuxdeploy for aarch64 (Official Continuous to match plugin)
-          # We use the official one to ensure compatibility with the plugin
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
+
+          # Download linuxdeploy for aarch64 directly to Tauri cache (user-writable)
           echo "Downloading linuxdeploy..."
-          sudo wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O /usr/local/bin/linuxdeploy
-          sudo chmod +x /usr/local/bin/linuxdeploy
-          
-          # 2. Download linuxdeploy-plugin-appimage for aarch64
+          curl -L --retry 3 -o "$HOME/.cache/tauri/linuxdeploy-aarch64.AppImage" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x "$HOME/.cache/tauri/linuxdeploy-aarch64.AppImage"
+
+          # Download linuxdeploy-plugin-appimage for aarch64
           echo "Downloading linuxdeploy-plugin-appimage..."
-          sudo wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage -O /usr/local/bin/linuxdeploy-plugin-appimage
-          sudo chmod +x /usr/local/bin/linuxdeploy-plugin-appimage
+          curl -L --retry 3 -o "$HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage" \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-aarch64.AppImage
+          chmod +x "$HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage"
 
-          # 3. Download AppRun for aarch64 (Required by Tauri for AppImage)
+          # Download AppRun for aarch64 (Required by Tauri for AppImage)
           echo "Downloading AppRun..."
-          sudo wget -q https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-aarch64 -O /usr/local/bin/AppRun-aarch64
-          sudo chmod +x /usr/local/bin/AppRun-aarch64
+          curl -L --retry 3 -o "$HOME/.cache/tauri/AppRun-aarch64" \
+            https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-aarch64
+          chmod +x "$HOME/.cache/tauri/AppRun-aarch64"
 
-          # Create symlinks to ensure they are found by name if needed by manual calls
-          sudo ln -sf /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-aarch64.AppImage
-          sudo ln -sf /usr/local/bin/linuxdeploy-plugin-appimage /usr/local/bin/linuxdeploy-plugin-appimage-aarch64.AppImage
-
-          # Copy to Tauri cache to prevent re-downloads during build
-          # Tauri looks for these specific names
-          cp /usr/local/bin/linuxdeploy $HOME/.cache/tauri/linuxdeploy-aarch64.AppImage
-          cp /usr/local/bin/linuxdeploy-plugin-appimage $HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage
-          cp /usr/local/bin/AppRun-aarch64 $HOME/.cache/tauri/AppRun-aarch64
-          
-          # Verify installation
+          # Sanity check: verify linuxdeploy can execute at all
           echo "Verifying linuxdeploy installation..."
-          linuxdeploy --version
-          
-          echo "Verifying linuxdeploy-plugin-appimage..."
-          # We call it directly to ensure it runs (checking for FUSE/extraction issues)
-          /usr/local/bin/linuxdeploy-plugin-appimage --version || echo "Plugin version check failed, but continuing..."
-          
+          "$HOME/.cache/tauri/linuxdeploy-aarch64.AppImage" --appimage-extract-and-run --version
+
           echo "Tauri cache contents:"
-          ls -la $HOME/.cache/tauri/
+          ls -la "$HOME/.cache/tauri/"
 
       - name: install frontend dependencies
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}
@@ -342,29 +330,31 @@ jobs:
       # Build with Tauri WITHOUT code signing (test builds, PRs, etc.)
       - name: Build with Tauri (unsigned)
         if: ${{ !inputs.sign-binaries }}
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
           LDAI_VERBOSE: "1"
+          RUST_BACKTRACE: "1"
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }}
+          args: ${{ inputs.build-args }} -vv
           projectPath: "apps/client"
 
       # Build with Tauri WITH code signing (release builds)
       - name: Build with Tauri (signed)
         if: ${{ inputs.sign-binaries }}
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
           LDAI_VERBOSE: "1"
+          RUST_BACKTRACE: "1"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -382,7 +372,7 @@ jobs:
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }}
+          args: ${{ inputs.build-args }} -vv
           projectPath: "apps/client"
 
       - name: Upload artifacts (macOS)
