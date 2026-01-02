@@ -123,11 +123,11 @@ fn determine_status(ratio_percent: f64, input_ext: &str, output_ext: &str) -> (S
     }
     
     if ratio > 1.05 {
-        ("⚠️ Inflated".to_string(), true)
+        ("Inflated".to_string(), true)
     } else if ratio > 0.95 {
-        ("⏸️ Marginal".to_string(), false)
+        ("Marginal".to_string(), false)
     } else {
-        ("✅ Compressed".to_string(), false)
+        ("Compressed".to_string(), false)
     }
 }
 
@@ -286,7 +286,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     report.push_str("| Category | Files | Purpose |\n");
     report.push_str("|---|---|---|\n");
     report.push_str(&format!("| Synthetic | {} | Codec/format validation |\n", synthetic.len()));
-    report.push_str(&format!("| Real | {} | **Realistic compression ratios** |\n", real.len()));
+    report.push_str(&format!("| Real | {} | Realistic compression ratios |\n", real.len()));
     report.push_str(&format!("| Edge | {} | Stress testing (long videos) |\n", edge.len()));
     report.push_str("\n");
 
@@ -297,7 +297,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     // Note: With Smart Passthrough active in app logic, we expect NO inflated files.
     // This section now serves as a regression test / bug detector.
     if !inflated_files.is_empty() {
-        report.push_str("## ⚠️ REGRESSION: Inflation Detected\n\n");
+        report.push_str("## REGRESSION: Inflation Detected\n\n");
         report.push_str("> **Smart Passthrough failed to prevent inflation for these files:**\n\n");
         report.push_str("| Metric | Value |\n");
         report.push_str("|---|---|\n");
@@ -317,7 +317,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     }
 
     // === REAL SAMPLE RESULTS (Main Data) ===
-    report.push_str("## Real Sample Results (Actual Measured Performance)\n\n");
+    report.push_str("## Real Sample Results (Measured Performance)\n\n");
     report.push_str("| File | Type | Status | Original | Output | Ratio | SSIM | Time |\n");
     report.push_str("|---|---|---|---|---|---|---|---|\n");
 
@@ -332,15 +332,10 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
     for r in &real {
         let ssim_str = r.ssim.map(|s| format!("{:.4}", s)).unwrap_or_else(|| "-".to_string());
             
-        let status_icon = if r.status == "Passthrough" { "↩️" } else { 
-            if r.compression_ratio > 1.0 { "⚠️" } else { "✅" }
-        };
-
         report.push_str(&format!(
-            "| {} | {} | {} {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
+            "| {} | {} | {} | {} | {} (.{}) | {:.2}% | {} | {}ms |\n",
             r.file_name,
             r.media_type,
-            status_icon,
             r.status,
             format_size(r.original_size_bytes),
             format_size(r.compressed_size_bytes),
@@ -386,23 +381,14 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         let total_comp = av_comp + real_img_comp;
         let av_fraction = av_comp as f64 / total_comp as f64;
         let img_fraction = real_img_comp as f64 / total_comp as f64;
-        let av_deviation = (av_fraction - 0.65_f64).abs();
-        let img_deviation = (img_fraction - 0.33_f64).abs();
         
         report.push_str("\n## Dataset Composition Validation\n");
-        report.push_str("| Metric | Value | Target | Status |\n");
-        report.push_str("|---|---|---|---|\n");
-        report.push_str(&format!("| Video/Audio | {:.1}% | ~65% | {} |\n", av_fraction * 100.0, if av_deviation <= 0.15 { "✅" } else { "⚠️" }));
-        report.push_str(&format!("| Images | {:.1}% | ~33% | {} |\n", img_fraction * 100.0, if img_deviation <= 0.15 { "✅" } else { "⚠️" }));
+        report.push_str("| Metric | Value | Target |\n");
+        report.push_str("|---|---|---|\n");
+        report.push_str(&format!("| Video/Audio | {:.1}% | ~65% |\n", av_fraction * 100.0));
+        report.push_str(&format!("| Images | {:.1}% | ~33% |\n", img_fraction * 100.0));
         
         // 2. PROJECTED SCENARIOS
-        report.push_str("\n## Cost Scenarios (1TB Library)\n");
-        report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
-        report.push_str("> **Architecture Note:** Files are uploaded directly to their target storage class:\n");
-        report.push_str("> - Thumbnails & Audio → GLACIER_IR (instant access)\n");
-        report.push_str("> - Originals → DEEP_ARCHIVE or GLACIER_IR (vault setting)\n");
-        report.push_str("> - Fresh uploads → S3 Standard (transitions after 60 days)\n\n");
-        
         let tb_bytes = 1024.0 * 1024.0 * 1024.0 * 1024.0;
         
         // Calculate fractions based on real samples
@@ -420,44 +406,8 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         let cost_thumbs = thumbs_gb * COST_S3_INSTANT;  // GLACIER_IR
         let cost_audio = audio_gb * COST_S3_INSTANT;    // GLACIER_IR
         
-        // Transition fee savings for direct upload
-        let transition_savings_per_tb = 1024.0 * COST_TRANSITION_TO_GLACIER;
-        
-        report.push_str("### 💰 Direct Upload Savings\n");
-        report.push_str(&format!("By uploading directly to Glacier instead of transitioning from Standard:\n"));
-        report.push_str(&format!("- **Saves ${:.2}/TB** in one-time transition fees\n\n", transition_savings_per_tb));
-        
-        // Scenario A: DESKTOP (compress everything)
-        let dt_da_cost = video_img_gb * COST_GLACIER_DEEP;
-        let dt_ir_cost = video_img_gb * COST_S3_INSTANT;
-        
-        report.push_str("### 🖥️ Desktop (Compress Everything)\n");
-        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
-        report.push_str("|---|---|---|---|---|\n");
-        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            dt_da_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_da_cost + cost_audio + cost_thumbs));
-        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            dt_ir_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_ir_cost + cost_audio + cost_thumbs));
-        report.push_str("\n");
-
-        // Scenario B: MOBILE (compress images only, videos stay original)
-        let mobile_video_img = real_video_orig + real_img_comp;
-        let mobile_video_img_fraction = mobile_video_img as f64 / real_orig as f64;
-        let mobile_video_img_gb = (tb_bytes * mobile_video_img_fraction) / (1024.0 * 1024.0 * 1024.0);
-
-        let mo_da_cost = mobile_video_img_gb * COST_GLACIER_DEEP;
-        let mo_ir_cost = mobile_video_img_gb * COST_S3_INSTANT;
-
-        report.push_str("### 📱 Mobile (Compress Images Only)\n");
-        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
-        report.push_str("|---|---|---|---|---|\n");
-        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            mo_da_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_audio + cost_thumbs));
-        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
-            mo_ir_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_audio + cost_thumbs));
-        
         // === UPLOAD REQUEST COSTS ===
-        report.push_str("\n---\n\n## 📤 Upload Request Costs\n\n");
+        report.push_str("\n---\n\n## Upload Request Costs\n\n");
         report.push_str("One-time costs when uploading files (PUT requests per 1,000 files).\n\n");
         report.push_str("| Storage Class | Cost/1K Requests | Cost per 10K Files | Cost per 100K Files |\n");
         report.push_str("|---|---|---|---|\n");
@@ -467,10 +417,9 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             COST_PUT_GLACIER_IR, COST_PUT_GLACIER_IR * 10.0, COST_PUT_GLACIER_IR * 100.0));
         report.push_str(&format!("| Deep Archive | ${:.3} | ${:.2} | ${:.2} |\n", 
             COST_PUT_DEEP_ARCHIVE, COST_PUT_DEEP_ARCHIVE * 10.0, COST_PUT_DEEP_ARCHIVE * 100.0));
-        report.push_str("\n> **Note:** Direct upload to Glacier/Deep Archive costs slightly more per request but saves $0.02/GB in transition fees.\n");
         
         // === FRESH UPLOAD TRANSITION COSTS ===
-        report.push_str("\n---\n\n## 🔄 Fresh Upload Transition Costs (After 60 Days)\n\n");
+        report.push_str("\n## Fresh Upload Transition Costs (After 60 Days)\n\n");
         report.push_str("Files uploaded with `fresh=true` stay in S3 Standard for 60 days, then transition automatically.\n\n");
         report.push_str("| Metric | Glacier IR | Deep Archive |\n");
         report.push_str("|---|---|---|\n");
@@ -488,7 +437,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         report.push_str(&format!("- Per 1 TB: ${:.2}\n\n", standard_60_day_cost * 1024.0));
         
         // === RETRIEVAL COSTS ===
-        report.push_str("\n---\n\n## 📥 Retrieval Costs\n\n");
+        report.push_str("\n## Retrieval Costs\n\n");
         report.push_str("Cost to retrieve archived originals (e.g., for download or editing).\n\n");
         report.push_str("| Storage Class | Retrieval Tier | Cost/GB | Wait Time | Per 100 GB | Per 1 TB |\n");
         report.push_str("|---|---|---|---|---|---|\n");
@@ -500,7 +449,7 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
             COST_RETRIEVE_DA_BULK, COST_RETRIEVE_DA_BULK * 100.0, COST_RETRIEVE_DA_BULK * 1024.0));
         
         // === RETRIEVAL PROJECTIONS BASED ON BENCHMARK DATA ===
-        report.push_str("\n### 📊 Retrieval Cost Projections (Based on Benchmark Data)\n\n");
+        report.push_str("\n### Retrieval Cost Projections (Based on Benchmark Data)\n\n");
         report.push_str(&format!("Using projected thumbnail size of **{:.2} GB** per 1TB library:\n\n", thumbs_gb));
         
         let thumbs_retrieve_ir = thumbs_gb * COST_RETRIEVE_GLACIER_IR;
@@ -531,6 +480,39 @@ fn generate_report(results: &[BenchmarkResult]) -> String {
         report.push_str("| **Dropbox** | $6.00 |\n");
         report.push_str("| **OneDrive** | $6.99 |\n");
         report.push_str("| **Amazon Photos (Prime)** | ~$7.50 |\n");
+
+        // === MONTHLY COST SCENARIOS ===
+        report.push_str("\n---\n\n## Monthly Cost Scenarios (1TB Library)\n");
+        report.push_str("Projections based on **actual measured sizes** (Smart Passthrough Enabled).\n\n");
+
+        // Scenario A: DESKTOP (compress everything)
+        let dt_da_cost = video_img_gb * COST_GLACIER_DEEP;
+        let dt_ir_cost = video_img_gb * COST_S3_INSTANT;
+        
+        report.push_str("### Desktop (Compress Everything)\n");
+        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
+        report.push_str("|---|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_da_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_da_cost + cost_audio + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            dt_ir_cost, video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, dt_ir_cost + cost_audio + cost_thumbs));
+        report.push_str("\n");
+
+        // Scenario B: MOBILE (compress images only, videos stay original)
+        let mobile_video_img = real_video_orig + real_img_comp;
+        let mobile_video_img_fraction = mobile_video_img as f64 / real_orig as f64;
+        let mobile_video_img_gb = (tb_bytes * mobile_video_img_fraction) / (1024.0 * 1024.0 * 1024.0);
+
+        let mo_da_cost = mobile_video_img_gb * COST_GLACIER_DEEP;
+        let mo_ir_cost = mobile_video_img_gb * COST_S3_INSTANT;
+
+        report.push_str("### Mobile (Compress Images Only)\n");
+        report.push_str("| Storage Class | Originals Cost/Mo | Audio Cost/Mo | Thumbnail Cost/Mo | **Total Cost/Mo** |\n");
+        report.push_str("|---|---|---|---|---|\n");
+        report.push_str(&format!("| Deep Archive | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_da_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_da_cost + cost_audio + cost_thumbs));
+        report.push_str(&format!("| Instant Retrieval | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | ${:.2} ({:.2} GB) | **${:.2}** |\n", 
+            mo_ir_cost, mobile_video_img_gb, cost_audio, audio_gb, cost_thumbs, thumbs_gb, mo_ir_cost + cost_audio + cost_thumbs));
     }
     
     report

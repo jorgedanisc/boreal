@@ -228,8 +228,11 @@ jobs:
           mkdir -p $HOME/.cache/tauri
 
           # Copy linuxdeploy and plugin to Tauri cache so it uses them instead of downloading
-          # Tauri expects "linuxdeploy" (no extension) in the cache directory
-          cp /usr/local/bin/linuxdeploy $HOME/.cache/tauri/linuxdeploy
+          # Use specific filenames matching what Tauri tries to download
+          cp /usr/local/bin/linuxdeploy $HOME/.cache/tauri/linuxdeploy-aarch64.AppImage
+          cp /usr/local/bin/linuxdeploy-plugin-appimage $HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage
+          chmod +x $HOME/.cache/tauri/linuxdeploy-aarch64.AppImage
+          chmod +x $HOME/.cache/tauri/linuxdeploy-plugin-appimage-aarch64.AppImage
           
           # Verify installation (export env var locally for this step too)
           echo "Verifying linuxdeploy installation..."
