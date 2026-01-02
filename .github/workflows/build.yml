@@ -121,6 +121,9 @@ jobs:
         if: contains(inputs.platform, 'ubuntu-22.04')
         run: |
           sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y universe
+          sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev xdg-utils libfuse2
 
       - name: Install Vulkan SDK (Windows x64)
@@ -207,7 +210,7 @@ jobs:
           # Pre-download and install linuxdeploy tools for ARM64
           # 'file' is needed by linuxdeploy to check binary types
           # 'squashfs-tools' is needed for creating the AppImage filesystem
-          sudo apt-get install -y fuse libfuse2 file squashfs-tools
+          sudo apt-get install -y libfuse2 file squashfs-tools
           
           # Create Tauri cache directory
           mkdir -p $HOME/.cache/tauri
@@ -344,6 +347,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
+          LDAI_VERBOSE: "1"
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
@@ -360,6 +364,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
+          LDAI_VERBOSE: "1"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -395,10 +400,10 @@ jobs:
         run: |
           set -x
           sudo apt-get update
-          sudo apt-get install -y fuse libfuse2
+          sudo apt-get install -y libfuse2
 
       - name: Remove libwayland-client.so from AppImage
-        if: contains(inputs.platform, 'ubuntu')
+        if: inputs.platform == 'ubuntu-22.04' || inputs.platform == 'ubuntu-24.04'
         run: |
           set -x
           # Find the AppImage file
