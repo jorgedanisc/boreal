@@ -207,7 +207,7 @@ jobs:
         if: inputs.platform == 'ubuntu-22.04-arm'
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
 
           # Install dependencies (no 'fuse' package, only libfuse2 per AppImage docs)
           sudo apt-get update
@@ -335,14 +335,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
-          LDAI_VERBOSE: "1"
-          RUST_BACKTRACE: "1"
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }} -vv
+          args: ${{ inputs.build-args }}
           projectPath: "apps/client"
 
       # Build with Tauri WITH code signing (release builds)
@@ -353,8 +351,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: true
-          LDAI_VERBOSE: "1"
-          RUST_BACKTRACE: "1"
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -372,7 +368,7 @@ jobs:
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }} -vv
+          args: ${{ inputs.build-args }}
           projectPath: "apps/client"
 
       - name: Upload artifacts (macOS)
@@ -388,14 +384,12 @@ jobs:
       - name: Install FUSE for AppImage processing
         if: contains(inputs.platform, 'ubuntu')
         run: |
-          set -x
           sudo apt-get update
           sudo apt-get install -y libfuse2
 
       - name: Remove libwayland-client.so from AppImage
         if: inputs.platform == 'ubuntu-22.04' || inputs.platform == 'ubuntu-24.04'
         run: |
-          set -x
           # Find the AppImage file
           APPIMAGE_PATH=$(find apps/client/src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
 
