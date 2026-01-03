@@ -95,9 +95,13 @@ jobs:
           VERSION="${{ steps.outputs.outputs.version }}"
           REPORT_FILE="benchmark-report/compression_report.md"
           if [ -f "$REPORT_FILE" ]; then
-            echo -e "\n\n## Compression Benchmark Results\n" >> release_notes.md
-            cat "$REPORT_FILE" >> release_notes.md
-            gh release edit "v$VERSION" --notes-file release_notes.md --append
+            # Get existing release notes
+            gh release view "v$VERSION" --json body -q .body > existing_notes.md
+            # Append benchmark results
+            echo -e "\n\n## Compression Benchmark Results\n" >> existing_notes.md
+            cat "$REPORT_FILE" >> existing_notes.md
+            # Update release with combined notes
+            gh release edit "v$VERSION" --notes-file existing_notes.md
           else
             echo "Benchmark report not found."
           fi
