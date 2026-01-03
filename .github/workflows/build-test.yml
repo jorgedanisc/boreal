@@ -107,7 +107,7 @@ jobs:
             args: "--bundles deb,appimage"
             target: "x86_64-unknown-linux-gnu"
           - platform: "ubuntu-22.04-arm"
-            args: "--bundles deb,appimage"
+            args: "--bundles deb"
             target: "aarch64-unknown-linux-gnu"
           - platform: "windows-latest"
             args: ""
